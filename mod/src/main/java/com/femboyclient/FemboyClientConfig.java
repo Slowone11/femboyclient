@@ -27,26 +27,8 @@ public final class FemboyClientConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(FemboyClientMod.MOD_ID);
 
-	/** Log every coin change to the CSV and upload it. */
+	/** The master switch: off stops every module and all talking to the website. */
 	public boolean enabled = true;
-
-	/**
-	 * Record the chat messages that caused each coin change.
-	 * Only game/system messages are recorded unless includePlayerChat is on.
-	 */
-	public boolean chatLogging = true;
-
-	/**
-	 * PRIVACY SWITCH. Off by default.
-	 *
-	 * When off, anything that looks like a message typed by a player (public chat,
-	 * party, guild, co-op, and private /msg) is dropped immediately and never
-	 * written to disk or uploaded. Only server-generated messages such as
-	 * "[Bazaar] Sold 64x ..." are kept.
-	 *
-	 * Turn this on only if you actually want other people's chat recorded.
-	 */
-	public boolean includePlayerChat = false;
 
 	/**
 	 * The player scanner: report the usernames in your lobby to the website (the
@@ -63,8 +45,7 @@ public final class FemboyClientConfig {
 	/**
 	 * With the scanner on, also record what other players say (the Chat tab on a player in the
 	 * Lobby Networth). On by default because it only runs while the scanner is on. Set it to
-	 * false to keep scanning usernames without recording chat. Separate from includePlayerChat,
-	 * which is about the coin log.
+	 * false to keep scanning usernames without recording chat.
 	 */
 	public boolean playerChat = true;
 
@@ -112,7 +93,7 @@ public final class FemboyClientConfig {
 	public String updateRepo = "";
 	public String updateToken = "";
 
-	/** How often the background thread sends a batch, in seconds. */
+	/** How often the background thread links the account and sends what the trackers queued, in seconds. */
 	public int uploadIntervalSeconds = 5;
 
 	/** MansionFinder: the Crystal Hollows scanner and its map in the corner of the screen (see HollowsHud). Placed from its screen in the G menu. */
@@ -225,8 +206,8 @@ public final class FemboyClientConfig {
 			config.save();
 		}
 
-		LOGGER.info("config: enabled={} chatLogging={} includePlayerChat={} scanner={} scannerWorld={} serverUrl={} serverDir={} enrollSecret={} apiKey={} updates={}",
-				config.enabled, config.chatLogging, config.includePlayerChat, config.scanner,
+		LOGGER.info("config: enabled={} scanner={} scannerWorld={} serverUrl={} serverDir={} enrollSecret={} apiKey={} updates={}",
+				config.enabled, config.scanner,
 				config.scannerWorld.isEmpty() ? "(any)" : config.scannerWorld, config.serverUrl,
 				config.serverDir.isEmpty() ? "(not set)" : config.serverDir,
 				config.enrollSecret.isBlank() ? "(not set)" : "(set)",
@@ -289,8 +270,6 @@ public final class FemboyClientConfig {
 	/** Copies over every value present in the properties, ignoring bad ones. */
 	private void apply(Properties props) {
 		enabled = bool(props, "enabled", enabled);
-		chatLogging = bool(props, "chatLogging", chatLogging);
-		includePlayerChat = bool(props, "includePlayerChat", includePlayerChat);
 		scanner = bool(props, "scanner", scanner);
 		scannerWorld = text(props, "scannerWorld", scannerWorld, true);
 		playerChat = bool(props, "playerChat", playerChat);
@@ -336,8 +315,6 @@ public final class FemboyClientConfig {
 	Properties toProperties() {
 		Properties props = new Properties();
 		props.setProperty("enabled", Boolean.toString(enabled));
-		props.setProperty("chatLogging", Boolean.toString(chatLogging));
-		props.setProperty("includePlayerChat", Boolean.toString(includePlayerChat));
 		props.setProperty("scanner", Boolean.toString(scanner));
 		props.setProperty("scannerWorld", scannerWorld);
 		props.setProperty("playerChat", Boolean.toString(playerChat));
@@ -375,8 +352,7 @@ public final class FemboyClientConfig {
 			Files.createDirectories(path.getParent());
 			Path temp = path.resolveSibling(path.getFileName() + ".tmp");
 			try (OutputStream out = Files.newOutputStream(temp)) {
-				props.store(out, "FemboyClient settings. includePlayerChat=true records other players' chat. "
-						+ "enrollSecret is a password: do not share this file.");
+				props.store(out, "FemboyClient settings. enrollSecret is a password: do not share this file.");
 			}
 			try {
 				Files.move(temp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);

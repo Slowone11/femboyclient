@@ -16,7 +16,7 @@ try {
 // The world filter (chips above the graph) is one setting shared by the graph, the
 // search and the player profile, and it is remembered between visits.
 //
-// The stream and the alerts keep running while the Coins tab is open, so an alert
+// The stream and the alerts keep running while another tab is open, so an alert
 // can appear wherever you are on the page.
 (function () {
   "use strict";
@@ -1633,7 +1633,6 @@ try {
         '<div class="tk-clearrow"><select id="tkClearWorld" aria-label="What to clear">' + options.join("") + "</select>" +
         '<button class="tk-btn tk-danger" data-clear="ask">Delete…</button>' +
         '<button class="tk-btn" data-clear="cancel">Cancel</button></div>' +
-        '<div class="tk-note" style="margin-top:8px">Your coin data is not touched.</div>' +
         (clearError ? '<div class="tk-error">' + esc(clearError) + "</div>" : "");
     } else {
       const listed = worldsList.find(w => w.world.toLowerCase() === clearChoice.toLowerCase());

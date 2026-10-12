@@ -15,8 +15,8 @@ import net.minecraft.network.chat.Component;
  *    older "connected" is meaningless once a "disconnected" has followed it.
  *
  * 2. Fabric's message events fire for every line shown through the chat listener,
- *    including ours. isSendingOwn() lets ChatCapture ignore them, otherwise our
- *    own lines could be blamed as the cause of a coin change.
+ *    including ours. isSendingOwn() lets the chat trackers ignore them, otherwise
+ *    our own lines would be read as something the server said.
  *
  * All state is touched only on the client thread; other threads hand work over
  * with Minecraft.execute().

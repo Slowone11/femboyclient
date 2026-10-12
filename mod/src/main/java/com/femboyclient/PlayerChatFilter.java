@@ -5,10 +5,7 @@ import java.util.regex.Pattern;
 /**
  * Decides whether a chat line was typed by a player.
  *
- * This is the privacy gate: lines that look like player chat are dropped before
- * they are stored, written to the CSV or uploaded, unless the user has switched
- * "includePlayerChat" on. The server runs the same check again (looks_like_player_chat
- * in app.py), so keep the two in step.
+ * The party tracker uses it to tell a line someone typed apart from a server line.
  *
  * Hypixel sends player chat as ordinary system messages, so the event type alone
  * cannot be trusted. Instead we look at the shape of the line:
@@ -21,8 +18,7 @@ import java.util.regex.Pattern;
  * A server line such as "[Bazaar] Sold 64x Enchanted Bone for 1,000 coins!" has no
  * "Name:" part, so it is kept.
  *
- * This errs towards calling something player chat. A false positive only loses a
- * cause label, while a false negative would leak someone's message.
+ * This errs towards calling something player chat.
  */
 public final class PlayerChatFilter {
 

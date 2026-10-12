@@ -1,18 +1,13 @@
 package com.femboyclient;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Instant;
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -34,9 +29,6 @@ class ServerLinkTest {
 	private static final String CONNECTED = ServerLink.CONNECTED_MESSAGE;
 	private static final String DISCONNECTED = ServerLink.DISCONNECTED_MESSAGE;
 
-	@TempDir
-	Path dir;
-
 	private FakeServer server;
 	private FemboyClientConfig config;
 	private List<String> notices;
@@ -46,7 +38,6 @@ class ServerLinkTest {
 	void setUp() throws IOException {
 		server = new FakeServer();
 		server.route("/register", FakeServer.Reply.ok("{\"api_key\":\"KEY-1\",\"created\":true}"));
-		server.route("/log", FakeServer.Reply.ok("{\"inserted\":1}"));
 		server.route("/heartbeat", FakeServer.Reply.ok("{\"ok\":true}"));
 
 		config = new FemboyClientConfig();
@@ -67,27 +58,13 @@ class ServerLinkTest {
 				new WebClient(() -> config.serverUrl),
 				() -> config,
 				() -> new AccountInfo(PLAYER, "Steve"),
-				notices::add,
-				dir.resolve("upload-queue.jsonl"));
+				notices::add);
 		created.activate();
 		return created;
 	}
 
-	private static CoinRow row(long coins, long change, String message) {
-		return new CoinRow("session-1", PLAYER, "Steve", OffsetDateTime.parse("2026-09-21T00:00:00-04:00"),
-				coins, change, "bazaar", message);
-	}
-
-	private static JsonArray body(FakeServer.Request request) {
-		return JsonParser.parseString(request.body()).getAsJsonArray();
-	}
-
 	private static JsonObject object(FakeServer.Request request) {
 		return JsonParser.parseString(request.body()).getAsJsonObject();
-	}
-
-	private Path queueFile() {
-		return dir.resolve("upload-queue.jsonl");
 	}
 
 	// ------------------------------------------------------------- linking
@@ -151,13 +128,12 @@ class ServerLinkTest {
 	@Test
 	void aRejectedEnrolSecretKeepsRetryingWithoutClaimingToBeConnected() {
 		server.route("/register", FakeServer.Reply.status(401));
-		link.enqueue(row(100, 5, "x"));
 
 		link.tick();
 		link.tick();
 
 		assertEquals(2, server.to("/register").size());
-		assertEquals(0, server.to("/log").size());
+		assertEquals(0, server.to("/heartbeat").size());
 		assertTrue(notices.isEmpty());
 	}
 
@@ -175,7 +151,6 @@ class ServerLinkTest {
 	@Test
 	void nothingHappensWhenSwitchedOff() {
 		config.enabled = false;
-		link.enqueue(row(100, 5, "x"));
 
 		link.tick();
 
@@ -192,86 +167,7 @@ class ServerLinkTest {
 		assertTrue(notices.isEmpty());
 	}
 
-	// ------------------------------------------------------------ uploading
-
-	@Test
-	void queuedRowsAreSentTogetherInOneRequest() {
-		link.enqueue(row(1000, 100, "first"));
-		link.enqueue(row(1500, 500, "second"));
-		link.enqueue(row(1400, -100, "third"));
-
-		link.tick();
-
-		List<FakeServer.Request> logs = server.to("/log");
-		assertEquals(1, logs.size());
-		assertEquals("KEY-1", logs.get(0).header("X-API-Key"));
-
-		JsonArray rows = body(logs.get(0));
-		assertEquals(3, rows.size());
-		assertEquals("first", rows.get(0).getAsJsonObject().get("cause_message").getAsString());
-		assertEquals(-100, rows.get(2).getAsJsonObject().get("change").getAsLong());
-		assertEquals(PLAYER.toString(), rows.get(0).getAsJsonObject().get("player_uuid").getAsString());
-	}
-
-	@Test
-	void aLargeBacklogIsSentInChunks() {
-		for (int i = 0; i < 1200; i++) {
-			link.enqueue(row(i, 1, "r" + i));
-		}
-
-		link.tick();
-
-		List<FakeServer.Request> logs = server.to("/log");
-		assertEquals(List.of(500, 500, 200), logs.stream().map(r -> body(r).size()).toList());
-		assertFalse(Files.exists(queueFile()));
-	}
-
-	@Test
-	void playerChatIsOnlyAllowedThroughWhenTheUserSwitchedItOn() {
-		link.enqueue(row(1, 1, "a"));
-		link.tick();
-		assertEquals(null, server.to("/log").get(0).header("X-Player-Chat"));
-
-		config.includePlayerChat = true;
-		link.enqueue(row(2, 1, "b"));
-		link.tick();
-		assertEquals("allowed", server.to("/log").get(1).header("X-Player-Chat"));
-	}
-
-	@Test
-	void overlongMessagesAreCutBeforeTheyAreSent() {
-		link.enqueue(row(1, 1, "x".repeat(5000)));
-
-		link.tick();
-
-		String sent = body(server.to("/log").get(0)).get(0).getAsJsonObject().get("cause_message").getAsString();
-		assertEquals(500, sent.length());
-	}
-
 	// ------------------------------------------------------ outages and retry
-
-	@Test
-	void rowsSurviveAnOutageAndAreSentOnceWhenTheServerReturns() {
-		AtomicBoolean down = new AtomicBoolean(false);
-		server.route("/log", request -> down.get() ? FakeServer.Reply.status(503) : FakeServer.Reply.ok("{}"));
-
-		link.tick(); // links and connects
-		down.set(true);
-		link.enqueue(row(100, 1, "one"));
-		link.enqueue(row(200, 2, "two"));
-		link.tick();
-
-		assertEquals(List.of(CONNECTED, DISCONNECTED), notices);
-		assertEquals(2, Files.exists(queueFile()) ? lines(queueFile()) : -1, "unsent rows are saved to disk");
-
-		down.set(false);
-		link.tick();
-
-		assertEquals(List.of(CONNECTED, DISCONNECTED, CONNECTED), notices);
-		List<FakeServer.Request> logs = server.to("/log");
-		assertEquals(2, body(logs.get(logs.size() - 1)).size(), "both rows arrive together, exactly once");
-		assertFalse(Files.exists(queueFile()), "the disk queue is cleared once delivered");
-	}
 
 	@Test
 	void disconnectedIsAnnouncedOncePerOutageNotEveryTick() {
@@ -280,7 +176,7 @@ class ServerLinkTest {
 
 		link.tick();
 		down.set(true);
-		link.setStatus(true, "s"); // forces a heartbeat each tick while failing
+		link.setStatus(true); // forces a heartbeat each tick while failing
 		link.tick();
 		link.tick();
 		link.tick();
@@ -290,8 +186,9 @@ class ServerLinkTest {
 
 	@Test
 	void anUnreachableServerBeforeEverConnectingStaysSilentThenAnnouncesConnected() throws IOException {
+		server.route("/tracker/snapshot", FakeServer.Reply.ok("{}"));
 		config.serverUrl = FakeServer.closedPortUrl();
-		link.enqueue(row(1, 1, "kept"));
+		link.enqueueTracker(lobbyMessage("Kept"));
 
 		link.tick();
 		assertTrue(notices.isEmpty(), "never connected, so there is nothing to be disconnected from");
@@ -300,77 +197,21 @@ class ServerLinkTest {
 		link.tick();
 
 		assertEquals(List.of(CONNECTED), notices);
-		assertEquals(1, body(server.to("/log").get(0)).size(), "the row waited and was then delivered");
+		assertEquals(List.of("Kept"), firstPlayers(server.to("/tracker/snapshot")), "the message waited and was then delivered");
 	}
 
 	@Test
-	void aRejectedKeyLinksAgainInsteadOfFailingForever() {
-		AtomicInteger registrations = new AtomicInteger();
-		server.route("/register", request -> FakeServer.Reply.ok(
-				"{\"api_key\":\"KEY-" + registrations.incrementAndGet() + "\",\"created\":false}"));
-		server.route("/log", request ->
-				"KEY-1".equals(request.header("X-API-Key")) ? FakeServer.Reply.status(401) : FakeServer.Reply.ok("{}"));
-
-		link.enqueue(row(1, 1, "x"));
-		link.tick(); // links with KEY-1, upload is rejected
-		link.tick(); // links again with KEY-2, upload works
-
-		assertEquals(2, server.to("/register").size());
-		assertEquals("KEY-2", server.to("/log").get(1).header("X-API-Key"));
-		assertEquals(List.of(CONNECTED, DISCONNECTED, CONNECTED), notices);
-	}
-
-	@Test
-	void rowsForAnotherAccountAreDroppedInsteadOfLinkingAgainForever() {
+	void dataForAnotherAccountIsDroppedInsteadOfLinkingAgainForever() {
 		server.route("/register", FakeServer.Reply.ok("{\"api_key\":\"KEY\",\"created\":false}"));
-		server.route("/log", new FakeServer.Reply(403, "{\"detail\":\"this API key may only be used for abc\"}"));
+		server.route("/tracker/snapshot", new FakeServer.Reply(403, "{\"detail\":\"this API key may only be used for abc\"}"));
 
-		link.enqueue(row(1, 1, "x"));
+		link.enqueueTracker(lobbyMessage("Alice"));
 		link.tick();
 		link.tick();
 
 		assertEquals(1, server.to("/register").size(), "the key is kept, not thrown away");
 		assertEquals(List.of(CONNECTED), notices);
-		assertEquals(1, server.to("/log").size(), "the refused row is not sent again");
-	}
-
-	@Test
-	void rowsFromAnEarlierRunAreLoadedFromDiskAndSent() throws IOException {
-		String good = row(1, 1, "old-1").toJson() + System.lineSeparator()
-				+ "this line is garbage" + System.lineSeparator()
-				+ System.lineSeparator()
-				+ row(2, 1, "old-2").toJson() + System.lineSeparator();
-		Files.writeString(queueFile(), good);
-
-		link = newLink(); // loads the file
-		link.tick();
-
-		assertEquals(2, body(server.to("/log").get(0)).size());
-		assertFalse(Files.exists(queueFile()));
-	}
-
-	// ----------------------------------------------------- refused rows
-
-	@Test
-	void oneBadRowIsDroppedWithoutBlockingTheGoodOnesAroundIt() {
-		server.route("/log", request -> request.body().contains("BAD")
-				? FakeServer.Reply.status(422) : FakeServer.Reply.ok("{}"));
-
-		link.enqueue(row(1, 1, "good-1"));
-		link.enqueue(row(2, 1, "BAD"));
-		link.enqueue(row(3, 1, "good-2"));
-		link.tick();
-
-		List<String> delivered = server.to("/log").stream()
-				.filter(r -> !r.body().contains("BAD"))
-				.flatMap(r -> body(r).asList().stream())
-				.map(e -> e.getAsJsonObject().get("cause_message").getAsString())
-				.toList();
-		assertEquals(List.of("good-1", "good-2"), delivered);
-
-		link.tick(); // and nothing is stuck: the bad row was dropped, not retried forever
-		assertEquals(4, server.to("/log").size(), "1 batch + 3 singles, then no more");
-		assertFalse(Files.exists(queueFile()));
+		assertEquals(1, server.to("/tracker/snapshot").size(), "the refused message is not sent again");
 	}
 
 	@Test
@@ -394,24 +235,22 @@ class ServerLinkTest {
 		link.tick(); // nothing changed, and 15 seconds have not passed
 		assertEquals(1, server.to("/heartbeat").size());
 
-		link.setStatus(true, "session-9");
+		link.setStatus(true);
 		link.tick();
 		assertEquals(2, server.to("/heartbeat").size());
 		JsonObject inGame = object(server.to("/heartbeat").get(1));
 		assertTrue(inGame.get("in_skyblock").getAsBoolean());
-		assertEquals("session-9", inGame.get("session_id").getAsString());
 		assertTrue(inGame.get("online").getAsBoolean());
 		assertEquals(PLAYER.toString(), inGame.get("player_uuid").getAsString());
 
-		link.setStatus(true, "session-9"); // same again: not a change
+		link.setStatus(true); // same again: not a change
 		link.tick();
 		assertEquals(2, server.to("/heartbeat").size());
 
-		link.setStatus(false, null);
+		link.setStatus(false);
 		link.tick();
 		JsonObject left = object(server.to("/heartbeat").get(2));
 		assertFalse(left.get("in_skyblock").getAsBoolean());
-		assertFalse(left.has("session_id"));
 	}
 
 	@Test
@@ -447,37 +286,21 @@ class ServerLinkTest {
 	// ---------------------------------------------------------------- stop()
 
 	@Test
-	void stopFlushesTheLastRowsAndMarksTheAccountOffline() {
+	void stopMarksTheAccountOffline() {
 		link.tick(); // links
-		link.enqueue(row(1, 1, "last"));
 
 		link.stop();
 
-		assertEquals(1, server.to("/log").size());
 		FakeServer.Request goodbye = server.to("/heartbeat").get(server.to("/heartbeat").size() - 1);
 		assertFalse(object(goodbye).get("online").getAsBoolean());
 		assertFalse(object(goodbye).get("in_skyblock").getAsBoolean());
 	}
 
 	@Test
-	void stopBeforeEverLinkingSavesTheRowsInsteadOfLosingThem() {
-		link.enqueue(row(1, 1, "unsent"));
-
+	void stopBeforeEverLinkingSendsNothing() {
 		link.stop();
 
 		assertEquals(0, server.count());
-		assertEquals(1, lines(queueFile()));
-	}
-
-	@Test
-	void stopWhileTheServerIsDownSavesTheRows() throws IOException {
-		link.tick();
-		config.serverUrl = FakeServer.closedPortUrl();
-		link.enqueue(row(1, 1, "unsent"));
-
-		link.stop();
-
-		assertEquals(1, lines(queueFile()));
 	}
 
 	// ------------------------------------------------------- player tracker
@@ -717,7 +540,7 @@ class ServerLinkTest {
 		link.enqueueTracker(lobbyMessage("One"));
 		link.enqueueTracker(lobbyMessage("Two"));
 		link.tick();
-		assertEquals(List.of(CONNECTED, DISCONNECTED), notices, "same connection, same notices as the coin data");
+		assertEquals(List.of(CONNECTED, DISCONNECTED), notices, "the outage is announced once");
 		assertTrue(delivered.isEmpty());
 
 		down.set(false);
@@ -793,19 +616,6 @@ class ServerLinkTest {
 	}
 
 	@Test
-	void trackerMessagesAndCoinRowsAreBothDeliveredInOneRound() {
-		server.route("/tracker/snapshot", FakeServer.Reply.ok("{}"));
-
-		link.enqueue(row(1000, 100, "coin row"));
-		link.enqueueTracker(lobbyMessage("Alice"));
-		link.tick();
-
-		assertEquals(1, server.to("/log").size());
-		assertEquals(1, server.to("/tracker/snapshot").size());
-		assertEquals(1, server.to("/heartbeat").size());
-	}
-
-	@Test
 	void stopSendsTheLastTrackerMessages() {
 		server.route("/tracker/snapshot", FakeServer.Reply.ok("{}"));
 		link.tick();   // links
@@ -824,14 +634,6 @@ class ServerLinkTest {
 		link.tick();
 
 		assertEquals(0, server.count());
-	}
-
-	private static long lines(Path file) {
-		try {
-			return Files.readAllLines(file).stream().filter(l -> !l.isBlank()).count();
-		} catch (IOException e) {
-			throw new AssertionError(e);
-		}
 	}
 
 	// ------------------------------------------------------- commands from the page

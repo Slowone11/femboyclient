@@ -5,9 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Femboy Client</title>
 
-<!-- Chart.js plus the date adapter it needs for a real time axis. -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -16,7 +13,7 @@
 <header>
   <div>
     <h1>Femboy <span>Client</span></h1>
-    <div class="sub">Coins, players and chat from your Hypixel SkyBlock accounts</div>
+    <div class="sub">Players and chat from your Hypixel SkyBlock accounts</div>
   </div>
   <div class="live"><span class="dot" id="dot"></span><span id="liveTxt">connecting…</span></div>
 </header>
@@ -24,66 +21,14 @@
 <div class="accounts" id="accounts"><div class="no-accounts">Loading accounts…</div></div>
 
 <nav class="tabs" role="tablist" aria-label="Sections">
-  <button role="tab" id="tabBtnCoins" aria-selected="true">Coins</button>
-  <button role="tab" id="tabBtnTracker" aria-selected="false">Lobby Networth</button>
+  <button role="tab" id="tabBtnTracker" aria-selected="true">Lobby Networth</button>
   <button role="tab" id="tabBtnFinder" aria-selected="false">Player Finder</button>
   <button role="tab" id="tabBtnChats" aria-selected="false">Chat Logs</button>
   <button role="tab" id="tabBtnFrienemys" aria-selected="false">Frienemys</button>
   <!--THISPC--><button role="tab" id="tabBtnLive" aria-selected="false">Live</button><!--/THISPC-->
 </nav>
 
-<section id="tabCoins">
-
-<div class="controls">
-  <div class="field grow" id="sessionField">
-    <label for="session">Session</label>
-    <select id="session"></select>
-  </div>
-
-  <div class="field">
-    <label>Chart</label>
-    <span class="group">
-      <button id="vTotal" class="on">Purse</button>
-      <button id="vDelta">Gain per period</button>
-    </span>
-  </div>
-</div>
-
-<div class="layout">
-  <div>
-    <div class="panel">
-      <h2 id="chartTitle">Coins over time</h2>
-      <div class="chartbox">
-        <canvas id="chart"></canvas>
-        <div class="chartempty" id="chartEmpty" hidden>No data for this session yet.</div>
-      </div>
-      <div class="note" id="mergeNote" hidden></div>
-
-      <div class="stats">
-        <div class="stat"><div class="k">Total gained</div><div class="v" id="sGained">—</div></div>
-        <div class="stat"><div class="k">Total lost</div><div class="v" id="sLost">—</div></div>
-        <div class="stat"><div class="k">Net change</div><div class="v" id="sNet">—</div></div>
-        <div class="stat"><div class="k" id="kRate">Coins per hour</div><div class="v" id="sRate">—</div></div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>Where the coins came from</h2>
-      <div id="breakdown"><div class="empty">No data yet.</div></div>
-    </div>
-  </div>
-
-  <div class="panel">
-    <h2>Coin messages</h2>
-    <div id="chatlog"><div class="empty">No messages yet.</div></div>
-    <div class="note">The game message behind each coin change. Other players' chat is left out
-      unless includePlayerChat is on in the mod's settings.</div>
-  </div>
-</div>
-
-</section>
-
-<section id="tabTracker" hidden>
+<section id="tabTracker">
   <div class="tk-toolbar">
     <div class="tk-search">
       <input id="tkSearch" type="search" maxlength="32" placeholder="Search a username…"

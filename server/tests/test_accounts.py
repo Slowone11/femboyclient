@@ -85,14 +85,6 @@ def test_every_new_tracker_row_keeps_the_account_name_and_uuid(client, two):
     assert rows("SELECT owner_uuid, owner_name FROM tracker_my_chats") == [{"owner_uuid": UUID_A, "owner_name": A}]
 
 
-def test_the_coin_rows_already_keep_the_account(client, two):
-    key_a, _ = two
-    row = {"session_id": "s1", "player_uuid": UUID_A, "player_name": A, "timestamp": "2026-09-21T10:00:00-04:00", "coins": 5,
-           "change": 0, "cause_label": "session_start", "cause_message": ""}
-    assert client.post("/log", json=[row], headers={"X-API-Key": key_a}).status_code == 200
-    assert rows("SELECT player_uuid, player_name FROM coin_rows") == [{"player_uuid": UUID_A, "player_name": A}]
-
-
 # ------------------------------------------------------------------ migrating a database made before this
 
 @pytest.fixture()
@@ -225,19 +217,6 @@ def test_your_own_chat_of_all_accounts_says_who_said_it(client, two):
     assert [(c["message"], c["account"]) for c in everyone["chats"]] == [("from b", B), ("from a", A)]
     assert get(client, "/tracker/mychat", owner=UUID_A)["count"] == 1
     assert get(client, "/tracker/mychat") == everyone
-
-
-def test_the_coin_rows_of_all_accounts_come_together(client, two):
-    key_a, key_b = two
-    for key, uuid, name, coins in ((key_a, UUID_A, A, 5), (key_b, UUID_B, B, 9)):
-        row = {"session_id": "s-" + name, "player_uuid": uuid, "player_name": name, "timestamp": "2026-09-21T10:00:00-04:00",
-               "coins": coins, "change": 0, "cause_label": "session_start", "cause_message": ""}
-        client.post("/log", json=[row], headers={"X-API-Key": key})
-
-    everyone = get(client, "/rows")["rows"]
-    assert {(r["player_name"], r["coins"]) for r in everyone} == {(A, 5), (B, 9)}
-    assert [r["player_name"] for r in get(client, "/rows", player_uuid=UUID_B)["rows"]] == [B]
-    assert len(get(client, "/rows", player_uuid="all")["rows"]) == 2
 
 
 def test_the_live_events_of_all_accounts_include_every_account(client, two):

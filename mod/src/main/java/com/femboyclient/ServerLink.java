@@ -1,22 +1,15 @@
 package com.femboyclient;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -38,17 +31,15 @@ import java.util.function.Supplier;
  *   1. Links this account to the website if that has not happened yet. The mod
  *      sends the account's UUID and name plus the shared enrol secret, and gets
  *      that account's API key back. Nothing has to be copied between PCs.
- *   2. Uploads queued coin rows.
- *   3. Sends a heartbeat every 15 seconds, and whenever the SkyBlock status
+ *   2. Sends a heartbeat every 15 seconds, and whenever the SkyBlock status
  *      changes, so the website can show which accounts are online.
- *   4. Sends the player tracker's lobby messages (POST /tracker/snapshot) as soon
+ *   3. Sends the player tracker's lobby messages (POST /tracker/snapshot) as soon
  *      as they are queued, over the same connection and with the same key.
- *   5. Asks for commands sent from the page (quit, or a chat message) on a thread
+ *   4. Asks for commands sent from the page (quit, or a chat message) on a thread
  *      of its own, has the game do them and reports how each went.
  *
- * If the website cannot be reached, rows are kept and retried, and saved to disk
- * so they survive a restart. The player is told in chat when the connection is
- * made and when it drops.
+ * If the website cannot be reached, the tracker's messages are kept and retried.
+ * The player is told in chat when the connection is made and when it drops.
  *
  * Dependencies are passed in so the whole thing can be tested without Minecraft.
  */
@@ -59,14 +50,8 @@ public final class ServerLink {
 	static final String CONNECTED_MESSAGE = "Connected to the server! Meow!";
 	static final String DISCONNECTED_MESSAGE = "Disconnected from server! >_<";
 
-	/** Stop the queue growing forever if the website is down for days. */
-	private static final int MAX_BACKLOG_ROWS = 10_000;
-
 	/** Player tracker messages kept while the website is unreachable. */
 	private static final int MAX_TRACKER_BACKLOG = 200;
-
-	/** Rows per request. The server accepts up to 2000. */
-	private static final int CHUNK_ROWS = 500;
 
 	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(8);
 	private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(3);
@@ -78,13 +63,6 @@ public final class ServerLink {
 	private final Supplier<FemboyClientConfig> config;
 	private final Supplier<AccountInfo> account;
 	private final Consumer<String> notifier;
-	private final Path queueFile;
-
-	/** Rows handed over by the client thread. The only thing it touches. */
-	private final ConcurrentLinkedQueue<JsonObject> pending = new ConcurrentLinkedQueue<>();
-
-	/** Rows waiting to be sent, oldest first. Guarded by lock. */
-	private final ArrayDeque<JsonObject> backlog = new ArrayDeque<>();
 
 	/** Player tracker messages handed over by the client thread. */
 	private final ConcurrentLinkedQueue<JsonObject> trackerPending = new ConcurrentLinkedQueue<>();
@@ -130,7 +108,6 @@ public final class ServerLink {
 	// What the heartbeat reports. Written by the client thread, read by ours.
 	private volatile boolean inSkyBlock;
 	private volatile String scannerStatus = "";
-	private volatile String sessionId;
 	private volatile boolean statusDirty = true;
 
 	// Everything below is guarded by lock.
@@ -142,18 +119,16 @@ public final class ServerLink {
 	private volatile long lastHeartbeatNanos;   // 0 means never; only a heartbeat that the website accepted sets it
 	private final Object heartbeatLock = new Object();
 	private boolean warnedNoCredentials;
-	private boolean warnedBacklogDrop;
 	private boolean warnedTrackerDrop;
 	private final Set<String> refusalsLogged = new HashSet<>();
 	private Duration timeout = REQUEST_TIMEOUT;
 
 	public ServerLink(WebClient web, Supplier<FemboyClientConfig> config, Supplier<AccountInfo> account,
-			Consumer<String> notifier, Path queueFile) {
+			Consumer<String> notifier) {
 		this.web = web;
 		this.config = config;
 		this.account = account;
 		this.notifier = notifier;
-		this.queueFile = queueFile;
 	}
 
 	// ------------------------------------------------------------- lifecycle
@@ -312,15 +287,9 @@ public final class ServerLink {
 		}
 	}
 
-	/** Accepts rows and loads any saved from last time. Separate from start() so tests can drive tick() themselves. */
+	/** Starts accepting tracker messages. Separate from start() so tests can drive tick() themselves. */
 	void activate() {
-		lock.lock();
-		try {
-			loadQueueFile();
-			active = true;
-		} finally {
-			lock.unlock();
-		}
+		active = true;
 	}
 
 	/** Flushes what is left, tells the website this account is going offline, and stops. */
@@ -356,18 +325,17 @@ public final class ServerLink {
 			return;
 		}
 		if (!locked) {
-			LOGGER.warn("the upload thread is busy, skipping the final flush (the CSV still has every row)");
+			LOGGER.warn("the upload thread is busy, skipping the final flush");
 			return;
 		}
 
 		try {
 			timeout = SHUTDOWN_TIMEOUT;
-			drainPending();
-			if (apiKey != null && flushBacklog()) {
+			if (apiKey != null) {
 				flushTracker();
-				sendHeartbeat(false);
-			} else if (!backlog.isEmpty()) {
-				saveQueueFile();
+				if (Boolean.TRUE.equals(connected)) {          // not when the website is down: closing the game would wait for it
+					sendHeartbeat(false);
+				}
 			}
 		} catch (RuntimeException e) {
 			LOGGER.warn("final upload failed", e);
@@ -377,13 +345,6 @@ public final class ServerLink {
 	}
 
 	// ---------------------------------------------------- called by the game
-
-	/** Called from the client thread. Must be fast and must never throw. */
-	public void enqueue(CoinRow row) {
-		if (active) {
-			pending.add(row.toJson());
-		}
-	}
 
 	/**
 	 * Called from the client thread. Queues a player tracker message and sends it
@@ -419,10 +380,9 @@ public final class ServerLink {
 	}
 
 	/** Tells the website whether this account is in SkyBlock, sent with the next heartbeat. */
-	public void setStatus(boolean inSkyBlock, String sessionId) {
-		if (this.inSkyBlock != inSkyBlock || !Objects.equals(this.sessionId, sessionId)) {
+	public void setStatus(boolean inSkyBlock) {
+		if (this.inSkyBlock != inSkyBlock) {
 			this.inSkyBlock = inSkyBlock;
-			this.sessionId = sessionId;
 			this.statusDirty = true;
 		}
 	}
@@ -557,11 +517,6 @@ public final class ServerLink {
 			return;
 		}
 
-		drainPending();
-		if (!flushBacklog()) {
-			return; // the website is having trouble; try again next tick
-		}
-
 		flushTracker();
 
 		heartbeatIfDue();
@@ -642,97 +597,6 @@ public final class ServerLink {
 		return true;
 	}
 
-	// ---------------------------------------------------------- uploading
-
-	/** Moves rows from the client thread's queue into the backlog. */
-	private void drainPending() {
-		JsonObject row;
-		while ((row = pending.poll()) != null) {
-			backlog.addLast(row);
-		}
-
-		while (backlog.size() > MAX_BACKLOG_ROWS) {
-			backlog.removeFirst();
-			if (!warnedBacklogDrop) {
-				warnedBacklogDrop = true;
-				LOGGER.warn("more than {} rows are waiting to upload, dropping the oldest", MAX_BACKLOG_ROWS);
-			}
-		}
-	}
-
-	/**
-	 * Sends the whole backlog. Returns true if it is now empty, or false if it had
-	 * to stop because the website is unavailable.
-	 */
-	private boolean flushBacklog() {
-		while (!backlog.isEmpty()) {
-			List<JsonObject> chunk = new ArrayList<>(Math.min(CHUNK_ROWS, backlog.size()));
-			for (JsonObject row : backlog) {
-				if (chunk.size() == CHUNK_ROWS) {
-					break;
-				}
-				chunk.add(row);
-			}
-
-			int finished = sendRows(chunk);
-			for (int i = 0; i < finished; i++) {
-				backlog.removeFirst();
-			}
-
-			if (finished < chunk.size()) {
-				// Rows that only exist in memory would be lost if the game closed now.
-				saveQueueFile();
-				return false;
-			}
-		}
-
-		clearQueueFile();
-		return true;
-	}
-
-	/**
-	 * Uploads rows and returns how many are finished with, meaning stored by the
-	 * website or dropped because it refused them. Anything after that is left to retry.
-	 */
-	private int sendRows(List<JsonObject> chunk) {
-		JsonArray array = new JsonArray();
-		chunk.forEach(array::add);
-
-		// The website blanks anything that looks like player chat, unless this
-		// header says the user switched includePlayerChat on.
-		Map<String, String> headers = config.get().includePlayerChat
-				? Map.of("X-API-Key", apiKey, "X-Player-Chat", "allowed")
-				: Map.of("X-API-Key", apiKey);
-
-		WebClient.Response response = web.post("/log", array.toString(), timeout, headers).join();
-
-		if (accepted(response, "upload")) {
-			LOGGER.info("uploaded {} row(s): {}", chunk.size(), response.body());
-			return chunk.size();
-		}
-		if (retryable(response)) {
-			return 0;
-		}
-
-		// The website refused these rows for good, for example HTTP 422 for a
-		// malformed one. A single bad row must not block everything behind it, so
-		// send them one at a time and drop only the ones that are refused.
-		if (chunk.size() > 1) {
-			int finished = 0;
-			for (JsonObject row : chunk) {
-				int one = sendRows(List.of(row));
-				if (one == 0) {
-					return finished;
-				}
-				finished += one;
-			}
-			return finished;
-		}
-
-		LOGGER.warn("dropping a row the website refused (HTTP {}): {}", response.status(), trim(response.body()));
-		return 1;
-	}
-
 	// ------------------------------------------------------- player tracker
 
 	/** Moves tracker messages from the client thread's queue into the backlog. */
@@ -795,9 +659,6 @@ public final class ServerLink {
 		body.addProperty("player_uuid", who.uuid().toString());
 		body.addProperty("player_name", who.name());
 		body.addProperty("in_skyblock", online && inSkyBlock);
-		if (sessionId != null) {
-			body.addProperty("session_id", sessionId);
-		}
 		body.addProperty("online", online);
 		if (!scannerStatus.isEmpty()) {
 			body.addProperty("scanner", scannerStatus);
@@ -857,8 +718,8 @@ public final class ServerLink {
 	}
 
 	/**
-	 * The website's 403 for rows that belong to a different account than the key. Linking again gives the same key,
-	 * so retrying never helps and would flip between connected and disconnected forever. The rows are dropped instead.
+	 * The website's 403 for data that belongs to a different account than the key. Linking again gives the same key,
+	 * so retrying never helps and would flip between connected and disconnected forever. The data is dropped instead.
 	 */
 	private static boolean isForAnotherAccount(WebClient.Response response) {
 		return response.body() != null && response.body().contains("may only be used for");
@@ -880,61 +741,13 @@ public final class ServerLink {
 		// Logged once per outage, not on every retry.
 		if (!failing) {
 			failing = true;
-			LOGGER.warn("cannot reach the website, keeping rows to retry: {}", detail);
+			LOGGER.warn("cannot reach the website, keeping messages to retry: {}", detail);
 		}
 		// Only say "disconnected" if we had actually been connected before.
 		if (Boolean.TRUE.equals(connected)) {
 			notifier.accept(DISCONNECTED_MESSAGE);
 		}
 		connected = false;
-	}
-
-	// ---------------------------------------------------------- the disk queue
-
-	/** Reads rows saved by an earlier run. One JSON object per line. */
-	private void loadQueueFile() {
-		if (!Files.exists(queueFile)) {
-			return;
-		}
-		try {
-			for (String line : Files.readAllLines(queueFile, StandardCharsets.UTF_8)) {
-				if (line.isBlank()) {
-					continue;
-				}
-				try {
-					backlog.addLast(JsonParser.parseString(line).getAsJsonObject());
-				} catch (RuntimeException e) {
-					LOGGER.warn("skipping an unreadable line in {}", queueFile);
-				}
-			}
-		} catch (IOException e) {
-			LOGGER.warn("could not read {}", queueFile, e);
-		}
-	}
-
-	/** Writes the unsent rows to disk so a restart does not lose them. */
-	private void saveQueueFile() {
-		StringBuilder text = new StringBuilder();
-		for (JsonObject row : backlog) {
-			text.append(row).append(System.lineSeparator());
-		}
-		try {
-			if (queueFile.getParent() != null) {
-				Files.createDirectories(queueFile.getParent());
-			}
-			Files.writeString(queueFile, text.toString(), StandardCharsets.UTF_8,
-					StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-		} catch (IOException e) {
-			LOGGER.warn("could not write {}", queueFile, e);
-		}
-	}
-
-	private void clearQueueFile() {
-		try {
-			Files.deleteIfExists(queueFile);
-		} catch (IOException e) {
-			LOGGER.warn("could not delete {}", queueFile, e);
-		}
 	}
 
 	private static String trim(String text) {

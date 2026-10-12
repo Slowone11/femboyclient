@@ -26,14 +26,8 @@ public class FemboyClientMod implements ClientModInitializer {
 	/** Shared logger. Output shows up in the game log prefixed with (femboyclient). */
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-	/** Watches the purse and turns changes into rows. */
-	public static final PurseTracker PURSE_TRACKER = new PurseTracker();
-
-	/** Rolling buffer of recent chat, used to explain each purse change. */
-	public static final ChatCapture CHAT_CAPTURE = new ChatCapture();
-
-	/** Writes every coin change to femboyclient/coins.csv in the game directory. */
-	public static final CsvLogger CSV_LOGGER = new CsvLogger();
+	/** Tells the website whether this account is in SkyBlock. */
+	private static final SkyBlockStatus SKYBLOCK_STATUS = new SkyBlockStatus();
 
 	/** Reports the usernames in your lobby to the website. */
 	public static final PlayerTracker PLAYER_TRACKER = new PlayerTracker();
@@ -72,13 +66,12 @@ public class FemboyClientMod implements ClientModInitializer {
 	/** The Player Finder's hop loop. Only does anything while the website has given it a target. */
 	public static final FinderHop FINDER = new FinderHop(new FinderGame(), () -> FemboyClientConfig.get().enabled);
 
-	/** Links the account to the website, uploads rows and reports status, on a background thread. */
+	/** Links the account to the website, sends the trackers' messages and reports status, on a background thread. */
 	public static final ServerLink SERVER = new ServerLink(
 			WebClient.withFallbacks(() -> FemboyClientConfig.get().serverUrlCandidates()),
 			FemboyClientConfig::get,
 			Account::current,
-			Chat::notice,
-			FabricLoader.getInstance().getGameDir().resolve("femboyclient").resolve("upload-queue.jsonl"));
+			Chat::notice);
 
 	/** Sends a small picture of the game screen to the website's Live tab. Always on, and never says anything in chat. */
 	public static final LiveView LIVE = new LiveView(FemboyClientConfig::get, SERVER::linked, SERVER::uploadFrame, SERVER::takeLiveInput);
@@ -172,9 +165,6 @@ public class FemboyClientMod implements ClientModInitializer {
 		// Start the website first, so it is ready by the time the account links and the scanner has something to send.
 		SERVER_LAUNCHER.start();
 
-		// Start buffering incoming chat so we can explain purse changes.
-		CHAT_CAPTURE.register();
-
 		// Auto Conversation: clicks the right option of an NPC dialog for you (its own chat listener, see NpcAutoAnswer).
 		NPC_AUTO.register();
 
@@ -195,7 +185,7 @@ public class FemboyClientMod implements ClientModInitializer {
 
 		// Runs at the end of every client tick. The tracker throttles itself to once a second.
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
-			PURSE_TRACKER.onClientTick(client);
+			SKYBLOCK_STATUS.onClientTick(client);
 			PLAYER_TRACKER.onClientTick(client);
 			tickHollows(client);
 			LIVE.tick(client);
@@ -211,7 +201,7 @@ public class FemboyClientMod implements ClientModInitializer {
 
 		// Leaving a server ends the session immediately rather than waiting for the grace period.
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
-			PURSE_TRACKER.onDisconnect();
+			SKYBLOCK_STATUS.onDisconnect();
 			PLAYER_TRACKER.onDisconnect();
 			HOLLOWS.reset();
 			MANSION_FINDER.reset();

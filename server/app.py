@@ -1,18 +1,12 @@
 """Femboy Client website API.
 
-A small FastAPI app backed by SQLite. It receives coin rows from the mod,
-stores them, and serves them back for the graph page.
+A small FastAPI app backed by SQLite. It receives what the mod's trackers see,
+stores it, and shows it on the page.
 
 Endpoints:
     POST /register       link an account (needs X-Enroll-Secret), returns its API key
-    POST /log            add a batch of rows            (needs X-API-Key)
     POST /heartbeat      "this account is online"       (needs X-API-Key)
     GET  /players        every linked account with its live status
-    GET  /sessions       sessions with totals (optionally for one player)
-    GET  /sessions/{id}  all rows for one session
-    GET  /rows           all rows for one account, across every session
-    GET  /summary       gained / lost over the last N hours for one player
-    GET  /live           server-sent events stream of new rows
     POST /tracker/snapshot   players seen in a lobby (needs X-API-Key)
     GET  /tracker/search     find a player and every time you met them
     GET  /tracker/tree       the graph data: you, your lobby visits, the players
@@ -67,19 +61,12 @@ STATIC_DIR = BASE / "static"
 # its last contact is newer than three missed heartbeats.
 ONLINE_WINDOW_MS = 45_000
 
-MAX_BATCH = 2000
-DEFAULT_ROWS = 20_000   # what /rows returns unless asked for a different number
-MAX_ROWS = 50_000
-MAX_MESSAGE_CHARS = 500
-
 TRACKER_MAX_PLAYERS = 500     # names in one snapshot
 SEARCH_CHAT_LIMIT = 300       # messages shown per player
 TREE_DEFAULT_PLAYERS = 500    # players the tree returns unless asked for more
 TREE_MAX_PLAYERS = 5000       # well under SQLite's ~32766 bound-parameter limit, used as an IN(...) list per page
 SEARCH_DEFAULT_LIMIT = 20
 SEARCH_MAX_LIMIT = 100
-MAX_SUMMARY_WINDOWS = 8
-MAX_SUMMARY_HOURS = 24 * 365
 
 
 
@@ -104,68 +91,6 @@ def normalise_uuid(value: str) -> str:
         return str(uuidlib.UUID(value.strip()))
     except (ValueError, AttributeError):
         raise HTTPException(status_code=422, detail="invalid player_uuid: " + repr(value))
-
-
-def timestamp_to_ms(text: str) -> int:
-    """Convert the mod's ISO 8601 timestamp to UTC epoch milliseconds.
-
-    Rows are compared by this number rather than by the text, because two PCs in
-    different timezones write different offsets and text sorts them wrongly.
-    """
-    try:
-        parsed = datetime.fromisoformat(text)
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=422, detail="bad timestamp: " + repr(text))
-    if parsed.tzinfo is None:
-        raise HTTPException(status_code=422, detail="timestamp needs a timezone offset: " + text)
-    return int(parsed.timestamp() * 1000)
-
-
-# ------------------------------------------------------------------ privacy
-#
-# The mod already refuses to upload other players' chat. This is a second check
-# on the server, so a modified or older mod cannot put it in the database either.
-
-_BRACKETS = re.compile(r"\[[^\]]*\]")
-
-
-def _has_ascii_word(token: str) -> bool:
-    # Minecraft usernames are ASCII, so a token without an ASCII letter or digit
-    # is a decoration such as a guild emblem, even if it is a Unicode "letter".
-    return any(("a" <= c <= "z") or ("A" <= c <= "Z") or ("0" <= c <= "9") for c in token)
-
-
-def _name_then_colon(text: str) -> bool:
-    """True if the part before the first colon is exactly one player name."""
-    stripped = _BRACKETS.sub(" ", text)
-    colon = stripped.find(":")
-    if colon <= 0:
-        return False
-
-    name = None
-    for token in stripped[:colon].split():
-        if not _has_ascii_word(token):
-            continue
-        if name is not None:
-            return False  # two real words, so a sentence, not "Name: message"
-        name = token
-
-    return name is not None and len(name) <= 16 and all(c.isalnum() or c == "_" for c in name)
-
-
-def looks_like_player_chat(text: str) -> bool:
-    """Mirror of PlayerChatFilter.looksLikePlayerChat in the mod."""
-    line = text.strip()
-
-    for prefix in ("From ", "To "):
-        if line.startswith(prefix):
-            return _name_then_colon(line[len(prefix):])
-
-    channel = line.find(" > ")
-    if channel >= 0:
-        return _name_then_colon(line[channel + 3:])
-
-    return _name_then_colon(line)
 
 
 # ------------------------------------------------------------------ config
@@ -264,35 +189,6 @@ def init_db() -> None:
         # without "database is locked" errors.
         conn.execute("PRAGMA journal_mode=WAL")
 
-        # One row per coin change. UNIQUE means a retry from the mod cannot
-        # create duplicates: same session plus same timestamp is the same event.
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS coin_rows ("
-            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
-            " session_id TEXT NOT NULL,"
-            " player_uuid TEXT NOT NULL,"
-            " player_name TEXT NOT NULL,"
-            " timestamp TEXT NOT NULL,"
-            " ts_ms INTEGER,"
-            " coins INTEGER NOT NULL,"
-            " change INTEGER NOT NULL,"
-            " cause_label TEXT NOT NULL,"
-            " cause_message TEXT NOT NULL DEFAULT '',"
-            " received_at TEXT NOT NULL,"
-            " UNIQUE(session_id, timestamp))"
-        )
-
-        # Databases created before ts_ms existed get the column added and filled in.
-        columns = {r["name"] for r in conn.execute("PRAGMA table_info(coin_rows)")}
-        if "ts_ms" not in columns:
-            conn.execute("ALTER TABLE coin_rows ADD COLUMN ts_ms INTEGER")
-        for r in conn.execute("SELECT id, timestamp FROM coin_rows WHERE ts_ms IS NULL").fetchall():
-            conn.execute("UPDATE coin_rows SET ts_ms = ? WHERE id = ?",
-                         (timestamp_to_ms(r["timestamp"]), r["id"]))
-
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_session ON coin_rows(session_id, id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_player_ts ON coin_rows(player_uuid, ts_ms)")
-
         # One row per linked account, so the page can show who is online.
         conn.execute(
             "CREATE TABLE IF NOT EXISTS players ("
@@ -300,7 +196,6 @@ def init_db() -> None:
             " player_name TEXT NOT NULL,"
             " status TEXT NOT NULL DEFAULT 'offline',"
             " in_skyblock INTEGER NOT NULL DEFAULT 0,"
-            " session_id TEXT,"
             " last_seen_ms INTEGER NOT NULL,"
             " registered_ms INTEGER NOT NULL,"
             " scanner TEXT NOT NULL DEFAULT '')"
@@ -309,14 +204,6 @@ def init_db() -> None:
         # Older databases get the scanner column added.
         if "scanner" not in {r["name"] for r in conn.execute("PRAGMA table_info(players)")}:
             conn.execute("ALTER TABLE players ADD COLUMN scanner TEXT NOT NULL DEFAULT ''")
-
-        # Accounts that uploaded before this table existed still appear.
-        conn.execute(
-            "INSERT OR IGNORE INTO players"
-            " (player_uuid, player_name, status, last_seen_ms, registered_ms)"
-            " SELECT player_uuid, MAX(player_name), 'offline', MAX(ts_ms), MIN(ts_ms)"
-            " FROM coin_rows GROUP BY player_uuid"
-        )
 
         # ---- player tracker. All times here are UTC, as text like 2026-09-21T19:41:03.123Z,
         # so text order is time order. No server, lobby or address is stored anywhere.
@@ -463,22 +350,22 @@ def init_db() -> None:
 
 
 def touch_player(conn, player_uuid: str, player_name: str, *, status: str = "online",
-                 in_skyblock: Optional[bool] = None, session_id: Optional[str] = None) -> None:
+                 in_skyblock: Optional[bool] = None) -> None:
     """Record that an account was just heard from."""
     now = now_ms()
     conn.execute(
-        "INSERT INTO players (player_uuid, player_name, status, in_skyblock, session_id,"
-        " last_seen_ms, registered_ms) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO players (player_uuid, player_name, status, in_skyblock,"
+        " last_seen_ms, registered_ms) VALUES (?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(player_uuid) DO UPDATE SET"
         "  player_name = excluded.player_name,"
         "  status = excluded.status,"
         "  last_seen_ms = excluded.last_seen_ms",
-        (player_uuid, player_name, status, int(bool(in_skyblock)), session_id, now, now),
+        (player_uuid, player_name, status, int(bool(in_skyblock)), now, now),
     )
     if in_skyblock is not None:
         conn.execute(
-            "UPDATE players SET in_skyblock = ?, session_id = ? WHERE player_uuid = ?",
-            (int(in_skyblock), session_id if in_skyblock else None, player_uuid),
+            "UPDATE players SET in_skyblock = ? WHERE player_uuid = ?",
+            (int(in_skyblock), player_uuid),
         )
 
 
@@ -497,22 +384,8 @@ class HeartbeatIn(BaseModel):
     player_uuid: str
     player_name: str
     in_skyblock: bool = False
-    session_id: Optional[str] = None
     online: bool = True  # the mod sends false once, when the game closes
     scanner: Optional[str] = None  # e.g. "ON (world: Hub)" or "OFF", shown on the Player Tracker tab
-
-
-class CoinRowIn(BaseModel):
-    """Matches CoinRow in the mod, field for field."""
-
-    session_id: str
-    player_uuid: str
-    player_name: str
-    timestamp: str
-    coins: int
-    change: int
-    cause_label: str
-    cause_message: str = ""
 
 
 # --------------------------------------------------------------- endpoints
@@ -547,67 +420,6 @@ def register(body: RegisterIn, x_enroll_secret: Optional[str] = Header(default=N
     return {"api_key": key, "created": created}
 
 
-@app.post("/log")
-def post_log(rows: List[CoinRowIn],
-             x_api_key: Optional[str] = Header(default=None),
-             x_player_chat: Optional[str] = Header(default=None)):
-    """Accept a batch of rows from the mod.
-
-    Player chat is blanked unless the mod sends "X-Player-Chat: allowed", which it
-    only does when includePlayerChat is switched on in its config. So that one
-    setting controls chat uploads, and this check catches a mod that forgot.
-    """
-    player = require_key(x_api_key)
-
-    if len(rows) > MAX_BATCH:
-        raise HTTPException(status_code=413, detail="at most %d rows per request" % MAX_BATCH)
-
-    allow_player_chat = (x_player_chat or "").strip().lower() == "allowed"
-    received_at = datetime.now(timezone.utc).isoformat()
-    inserted = 0
-    sanitised = 0
-    seen = {}
-
-    # Validate everything first, so a bad row rejects the whole batch cleanly
-    # instead of leaving half of it stored.
-    prepared = []
-    for row in rows:
-        player_uuid = normalise_uuid(row.player_uuid)
-        check_bound(player, player_uuid)
-        ts_ms = timestamp_to_ms(row.timestamp)
-
-        message = row.cause_message[:MAX_MESSAGE_CHARS]
-        label = row.cause_label[:32]
-        if message and not allow_player_chat and looks_like_player_chat(message):
-            message, label = "", "unknown"
-            sanitised += 1
-
-        seen[player_uuid] = row.player_name[:32]
-        prepared.append((row.session_id, player_uuid, row.player_name[:32], row.timestamp,
-                         ts_ms, row.coins, row.change, label, message, received_at))
-
-    with db() as conn:
-        for values in prepared:
-            cursor = conn.execute(
-                "INSERT OR IGNORE INTO coin_rows"
-                " (session_id, player_uuid, player_name, timestamp, ts_ms, coins,"
-                "  change, cause_label, cause_message, received_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                values,
-            )
-            inserted += cursor.rowcount
-
-        for player_uuid, name in seen.items():
-            touch_player(conn, player_uuid, name)
-
-    return {
-        "received": len(rows),
-        "inserted": inserted,
-        "duplicates": len(rows) - inserted,
-        "sanitised": sanitised,
-    }
-
-
 @app.post("/heartbeat")
 def heartbeat(body: HeartbeatIn, x_api_key: Optional[str] = Header(default=None)):
     """Tell the website an account is online, and whether it is in SkyBlock."""
@@ -618,8 +430,7 @@ def heartbeat(body: HeartbeatIn, x_api_key: Optional[str] = Header(default=None)
     with db() as conn:
         touch_player(conn, player_uuid, body.player_name.strip()[:32] or "unknown",
                      status="online" if body.online else "offline",
-                     in_skyblock=body.in_skyblock and body.online,
-                     session_id=body.session_id)
+                     in_skyblock=body.in_skyblock and body.online)
         if body.scanner is not None:
             # Keep only a short, printable line; it is displayed as text.
             status = "".join(c for c in body.scanner if c.isprintable())[:60]
@@ -629,202 +440,23 @@ def heartbeat(body: HeartbeatIn, x_api_key: Optional[str] = Header(default=None)
 
 @app.get("/players")
 def get_players():
-    """Every linked account, with whether it is online and its latest coins."""
+    """Every linked account, with whether it is online and in SkyBlock."""
     now = now_ms()
     result = []
 
     with db() as conn:
         for p in conn.execute("SELECT * FROM players ORDER BY last_seen_ms DESC").fetchall():
-            latest = conn.execute(
-                "SELECT coins, ts_ms, session_id FROM coin_rows WHERE player_uuid = ?"
-                " ORDER BY ts_ms DESC, id DESC LIMIT 1", (p["player_uuid"],)).fetchone()
-            session_count = conn.execute(
-                "SELECT COUNT(DISTINCT session_id) FROM coin_rows WHERE player_uuid = ?",
-                (p["player_uuid"],)).fetchone()[0]
-
             online = p["status"] == "online" and now - p["last_seen_ms"] <= ONLINE_WINDOW_MS
-            in_skyblock = online and bool(p["in_skyblock"])
-
-            if in_skyblock and p["session_id"]:
-                current_session = p["session_id"]
-            else:
-                current_session = latest["session_id"] if latest else None
-
             result.append({
                 "player_uuid": p["player_uuid"],
                 "player_name": p["player_name"],
                 "online": online,
-                "in_skyblock": in_skyblock,
+                "in_skyblock": online and bool(p["in_skyblock"]),
                 "last_seen_ms": p["last_seen_ms"],
-                "coins": latest["coins"] if latest else None,
-                "coins_at_ms": latest["ts_ms"] if latest else None,
-                "session_id": current_session,
-                "session_count": session_count,
                 "scanner": p["scanner"],
                 "profile_id": p["profile_id"],
             })
     return result
-
-
-@app.get("/sessions")
-def get_sessions(player_uuid: Optional[str] = Query(default=None)):
-    """List every session with its totals, newest first."""
-    sql = (
-        "SELECT session_id, player_uuid,"
-        " MAX(player_name) AS player_name,"
-        " MIN(ts_ms) AS started_ms,"
-        " MAX(ts_ms) AS ended_ms,"
-        " COUNT(*) AS row_count,"
-        " SUM(CASE WHEN change > 0 THEN change ELSE 0 END) AS gained,"
-        " SUM(CASE WHEN change < 0 THEN -change ELSE 0 END) AS lost,"
-        " SUM(change) AS net,"
-        " MIN(coins) AS min_coins,"
-        " MAX(coins) AS max_coins"
-        " FROM coin_rows"
-    )
-    params: list = []
-    if player_uuid:
-        sql += " WHERE player_uuid = ?"
-        params.append(normalise_uuid(player_uuid))
-    sql += " GROUP BY session_id, player_uuid ORDER BY started_ms DESC"
-
-    with db() as conn:
-        return [dict(r) for r in conn.execute(sql, params).fetchall()]
-
-
-@app.get("/sessions/{session_id}")
-def get_session_rows(session_id: str):
-    """Every row for one session, oldest first, ready to plot."""
-    with db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM coin_rows WHERE session_id = ? ORDER BY ts_ms, id",
-            (session_id,),
-        ).fetchall()
-
-    if not rows:
-        raise HTTPException(status_code=404, detail="no such session")
-    return [dict(r) for r in rows]
-
-
-@app.get("/summary")
-def get_summary(player_uuid: str, hours: str = "1,6,24"):
-    """Coins gained and lost by one account over the last N hours.
-
-    hours is a comma separated list, e.g. "1,6,24". Used by /femboyclient data.
-    """
-    player_uuid = normalise_uuid(player_uuid)
-
-    windows = []
-    for part in hours.replace(" ", ",").split(","):
-        if not part:
-            continue
-        try:
-            value = float(part)
-        except ValueError:
-            raise HTTPException(status_code=422, detail="not a number of hours: " + repr(part))
-        if not 0 < value <= MAX_SUMMARY_HOURS:
-            raise HTTPException(status_code=422, detail="hours must be above 0 and at most %d" % MAX_SUMMARY_HOURS)
-        windows.append(value)
-
-    if not windows:
-        raise HTTPException(status_code=422, detail="give at least one number of hours")
-    if len(windows) > MAX_SUMMARY_WINDOWS:
-        raise HTTPException(status_code=422, detail="at most %d windows" % MAX_SUMMARY_WINDOWS)
-
-    now = now_ms()
-    result = []
-    with db() as conn:
-        for value in windows:
-            since = now - int(value * 3_600_000)
-            row = conn.execute(
-                "SELECT"
-                " COALESCE(SUM(CASE WHEN change > 0 THEN change END), 0) AS gained,"
-                " COALESCE(SUM(CASE WHEN change < 0 THEN -change END), 0) AS lost,"
-                " COUNT(CASE WHEN change != 0 THEN 1 END) AS changes"
-                " FROM coin_rows WHERE player_uuid = ? AND ts_ms >= ?",
-                (player_uuid, since)).fetchone()
-            result.append({
-                "hours": value,
-                "gained": row["gained"],
-                "lost": row["lost"],
-                "net": row["gained"] - row["lost"],
-                "changes": row["changes"],
-            })
-
-    return {"player_uuid": player_uuid, "windows": result}
-
-
-@app.get("/rows")
-def get_rows(player_uuid: Optional[str] = None, limit: int = Query(default=DEFAULT_ROWS, ge=1, le=MAX_ROWS)):
-    """Every row for one account across all its sessions, oldest first (or every account's, without player_uuid).
-
-    This is what the graph page's "All sessions" view plots. If there are more than
-    `limit` rows, the newest `limit` are returned and `truncated` is true. Each row says which account it is from.
-    """
-    player_uuid = _scope_owner(player_uuid)
-
-    with db() as conn:
-        found = conn.execute(
-            "SELECT * FROM coin_rows" + (" WHERE player_uuid = ?" if player_uuid else "") + " ORDER BY ts_ms DESC, id DESC LIMIT ?",
-            ([player_uuid] if player_uuid else []) + [limit + 1],   # one extra row tells us whether there was more
-        ).fetchall()
-
-    truncated = len(found) > limit
-    found = found[:limit]
-    found.reverse()
-    return {"rows": [dict(r) for r in found], "truncated": truncated, "limit": limit}
-
-
-def _fetch_new_rows(last_id: int, session_id: Optional[str], player_uuid: Optional[str] = None) -> list:
-    sql = "SELECT * FROM coin_rows WHERE id > ?"
-    params: list = [last_id]
-    if session_id:
-        sql += " AND session_id = ?"
-        params.append(session_id)
-    if player_uuid:
-        sql += " AND player_uuid = ?"
-        params.append(player_uuid)
-    sql += " ORDER BY id"
-    with db() as conn:
-        return conn.execute(sql, params).fetchall()
-
-
-def _newest_id() -> int:
-    with db() as conn:
-        return conn.execute("SELECT COALESCE(MAX(id), 0) AS m FROM coin_rows").fetchone()["m"]
-
-
-@app.get("/live")
-async def live(since: Optional[int] = Query(default=None),
-               session_id: Optional[str] = Query(default=None),
-               player_uuid: Optional[str] = Query(default=None)):
-    """Stream new rows as server-sent events.
-
-    By default it starts from the newest row, so you only see things that
-    happen from now on. Pass ?since=<id> to replay from a known point, and
-    session_id or player_uuid to only receive rows for that session or account.
-    """
-    # Checked before streaming starts, so a bad value is a normal 422 reply.
-    account = normalise_uuid(player_uuid) if player_uuid else None
-
-    async def event_stream():
-        last_id = await asyncio.to_thread(_newest_id) if since is None else since
-
-        while True:
-            # Database work runs off the event loop so a slow query cannot
-            # stall every other connected page.
-            new_rows = await asyncio.to_thread(_fetch_new_rows, last_id, session_id, account)
-
-            for row in new_rows:
-                last_id = row["id"]
-                yield "data: " + json.dumps(dict(row)) + "\n\n"
-
-            if not new_rows:
-                yield ": keepalive\n\n"  # comment frame, keeps the connection open
-
-            await asyncio.sleep(1)
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ----------------------------------------------------------- player tracker
@@ -2472,7 +2104,6 @@ def tracker_clear(body: TrackerClearIn, request: Request):
     This cannot be undone, so it only works from the PC the website runs on. Anyone
     else on the network (LAN mode) can read the graph but not wipe it. Players no one
     has met any more are removed, and the counts of the rest are worked out again.
-    Coin data is never touched.
     """
     if not _is_local(request):
         raise HTTPException(status_code=403, detail="clearing is only allowed from the PC running the website")
@@ -3185,7 +2816,7 @@ app.mount("/static", GZipMiddleware(FreshStaticFiles(directory=STATIC_DIR), mini
 
 @app.get("/")
 def index(request: Request):
-    """Serve the graph page.
+    """Serve the page.
 
     Its script and stylesheet links get a version (the time they last changed), so a
     browser can never keep running an old copy of them after an update.
@@ -3207,8 +2838,8 @@ def index(request: Request):
 @app.get("/health")
 def health():
     with db() as conn:
-        total = conn.execute("SELECT COUNT(*) AS c FROM coin_rows").fetchone()["c"]
-    return {"status": "ok", "rows": total}
+        players = conn.execute("SELECT COUNT(*) AS c FROM players").fetchone()["c"]
+    return {"status": "ok", "players": players}
 
 
 def _lan_address() -> Optional[str]:
@@ -3227,7 +2858,7 @@ def announce() -> None:
     lan = _lan_address()
     print("=" * 66)
     print("Femboy Client server is running.")
-    print("  Graph page      : http://127.0.0.1:8000/")
+    print("  Website         : http://127.0.0.1:8000/")
     print("  Enrol secret    : in config.json (\"enroll_secret\"), not printed so it stays out of server.log")
     if lan:
         print("  Another PC uses : http://%s:8000   (start with --host 0.0.0.0)" % lan)
