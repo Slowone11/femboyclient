@@ -1,0 +1,26 @@
+{
+	"schemaVersion": 1,
+	"id": "femboyclient",
+	"version": "${version}",
+	"name": "Femboy Client",
+	"description": "Client-side Hypixel SkyBlock utility: purse tracker, Crystal Hollows map, lobby scanner and more. Reads the scoreboard, tab list and chat; it only types commands, chat or clicks for a feature you switch on (Player Finder, Auto Conversation, Looped Clicker, remote commands).",
+	"authors": [
+		"anonfile9"
+	],
+	"license": "MIT",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"com.femboyclient.FemboyClientMod"
+		]
+	},
+	"mixins": [
+		"femboyclient.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": ">=26.1.2 <=26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

@@ -1,0 +1,13 @@
+pluginManagement {
+	repositories {
+		// Fabric's maven hosts the Loom plugin.
+		maven {
+			name = 'Fabric'
+			url = 'https://maven.fabricmc.net/'
+		}
+		mavenCentral()
+		gradlePluginPortal()
+	}
+}
+
+rootProject.name = 'femboyclient'

@@ -1,0 +1,21 @@
+# Your API keys live here. Never commit this.
+config.json
+
+# Local database and virtual environment.
+femboyclient.db
+.venv/
+__pycache__/
+
+# SQLite write-ahead files and backups
+femboyclient.db-wal
+femboyclient.db-shm
+*.bak
+server.log
+server.err.log
+*.log.new
+cointracker.db
+networth/node_modules/
+
+# old database copies made before each upgrade
+backups/
+.pytest_cache/

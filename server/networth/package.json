@@ -1,0 +1,10 @@
+{
+  "name": "femboyclient-networth",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Calculates a SkyBlock networth for the Femboy Client website. Run by server/app.py, never by the mod.",
+  "license": "MIT",
+  "dependencies": {
+    "skyhelper-networth": "^2.10.0"
+  }
+}

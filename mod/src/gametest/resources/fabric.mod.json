@@ -1,0 +1,27 @@
+{
+	"schemaVersion": 1,
+	"id": "femboyclient-gametest",
+	"version": "1.0.0",
+	"name": "Femboy Client screen test",
+	"description": "Opens the player screen in a test world and takes screenshots. Development only; never part of the released jar.",
+	"environment": "client",
+	"entrypoints": {
+		"fabric-client-gametest": [
+			"com.femboyclient.gametest.LoopedClickerGameTest",
+			"com.femboyclient.gametest.FullbrightGameTest",
+			"com.femboyclient.gametest.PlayerScreenGameTest",
+			"com.femboyclient.gametest.HollowsMapGameTest",
+			"com.femboyclient.gametest.HollowsScanGameTest",
+			"com.femboyclient.gametest.LiveViewGameTest",
+			"com.femboyclient.gametest.LiveInputGameTest",
+			"com.femboyclient.gametest.NpcAutoGameTest",
+			"com.femboyclient.gametest.NpcAutoGreenGameTest",
+			"com.femboyclient.gametest.NpcAutoTagGameTest",
+			"com.femboyclient.gametest.NpcAutoCustomGameTest"
+		]
+	},
+	"depends": {
+		"fabric-api": "*",
+		"femboyclient": "*"
+	}
+}

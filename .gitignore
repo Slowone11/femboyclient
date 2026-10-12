@@ -1,0 +1,13 @@
+# mod/.gitignore and server/.gitignore cover each half (secrets, builds, databases, the venv).
+
+# Per-machine Claude Code settings.
+.claude/settings.local.json
+
+# Release jars downloaded to hand out by hand.
+dist/
+
+# Safety net: no database or log is ever committed, wherever it is.
+*.db
+*.db-wal
+*.db-shm
+*.log

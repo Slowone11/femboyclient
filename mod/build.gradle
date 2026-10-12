@@ -1,0 +1,97 @@
+plugins {
+	// Minecraft 26.x ships unobfuscated, so we use the plain (non-remapping)
+	// Loom plugin. The old 'net.fabricmc.fabric-loom-remap' id is only for 1.21.11 and older.
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+// The mod jar is named "femboyclient-<version>.jar".
+base {
+	archivesName = 'femboyclient'
+}
+
+repositories {
+	// Loom adds the Minecraft/Fabric repositories automatically.
+	// Extra repositories for third-party mods would go here.
+}
+
+loom {
+	runs {
+		// The screenshot test opens a bigger window, like a real monitor, so the GUI scale and sharpness are realistic.
+		configureEach {
+			if (name == "clientGameTest") {
+				programArgs "--width", "1600", "--height", "900"
+			}
+		}
+	}
+	mods {
+		"femboyclient" {
+			sourceSet sourceSets.main
+		}
+	}
+}
+
+// Automated screenshots of the player screen (gradlew runClientGametest). The test lives in src/gametest and is never part of the jar.
+fabricApi {
+	configureTests {
+		createSourceSet = true
+		modId = "femboyclient-gametest"
+		enableClientGameTests = true
+		enableGameTests = false
+	}
+}
+
+dependencies {
+	// Versions live in gradle.properties.
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// Unit tests (run with: gradlew test).
+	testImplementation platform('org.junit:junit-bom:6.1.3')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+	useJUnitPlatform()
+	// A test that hangs, for example an upload loop that never ends, must fail
+	// instead of freezing the build.
+	systemProperty 'junit.jupiter.execution.timeout.default', '30s'
+	testLogging {
+		events 'failed'
+		exceptionFormat 'full'
+	}
+}
+
+processResources {
+	// Substitute ${version} inside fabric.mod.json with the version from gradle.properties.
+	def version = project.version
+	inputs.property "version", version
+
+	filesMatching("fabric.mod.json") {
+		expand "version": version
+	}
+
+	// Optional per-machine defaults, baked into the jar so a copy of it on another
+	// PC already knows where the website is and how to link an account.
+	// Create defaults.local.properties (see defaults.local.properties.example);
+	// it is kept out of version control because it holds the enrol secret.
+	def localDefaults = file('defaults.local.properties')
+	if (localDefaults.exists()) {
+		from(localDefaults) {
+			rename { 'femboyclient-defaults.properties' }
+		}
+	}
+}
+
+// Minecraft 26.2 requires Java 25.
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+	// The source uses a literal section sign in ScoreboardReader, so pin the encoding.
+	it.options.encoding = 'UTF-8'
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}

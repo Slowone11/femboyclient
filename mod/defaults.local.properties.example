@@ -1,0 +1,26 @@
+# Copy this file to defaults.local.properties and fill it in, then rebuild the jar.
+# The jar you build carries these values, so copying it to another PC is all it
+# takes for that PC's Minecraft account to link itself to your website.
+#
+# serverUrl: the address of the PC running the website. From another PC this
+#            cannot be 127.0.0.1; use the "Another PC uses" address the server
+#            prints when it starts, e.g. http://192.168.1.228:8000
+# enrollSecret: the enroll_secret value in server/config.json. Treat the finished
+#            jar like a password, because anyone holding it can link accounts.
+serverUrl=http://127.0.0.1:8000
+# serverUrls: more addresses to try, in order, when serverUrl cannot be reached (comma separated), e.g. a Tailscale address for a friend.
+serverUrls=
+enrollSecret=paste-the-enroll_secret-from-server-config.json-here
+# updateRepo / updateToken: where the mod updates itself from. updateRepo is the GitHub
+#            repository (owner/name) whose newest release holds the jar; updateToken is a
+#            fine-grained token with read-only access to that one repository's contents.
+#            Only ever read from the jar, never from a player's config file. Leave both empty
+#            to update from the website instead. GitHub Actions builds the released jars from
+#            a copy of this whole file (the MOD_DEFAULTS_PROPERTIES secret), so after changing
+#            it run: gh secret set MOD_DEFAULTS_PROPERTIES < defaults.local.properties
+updateRepo=
+updateToken=
+# serverDir: the website's folder (with app.py and .venv) on the PC that runs it,
+#            e.g. D:/COinView/server. With it the mod starts the website when the
+#            game starts on that PC. PCs without the folder ignore it.
+serverDir=
