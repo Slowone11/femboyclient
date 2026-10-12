@@ -14,7 +14,7 @@ public final class PlayerInfoKey {
 
 	private static KeyMapping key;
 
-	/** The "Femboy Client" group in Options > Controls, shared with {@link HollowsWalkGame}'s key. */
+	/** The "Femboy Client" group in Options > Controls. */
 	static KeyMapping.Category category;
 
 	/**

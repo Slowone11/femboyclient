@@ -205,7 +205,6 @@ public class FemboyClientMod implements ClientModInitializer {
 			FrienemiesSync.tick();
 			Keepsprint.tick(client);
 			LoopedClicker.tick(client);
-			HollowsWalkGame.tick(client);
 			FINDER.tick();
 			Chat.onTick(client);
 		});
@@ -219,7 +218,6 @@ public class FemboyClientMod implements ClientModInitializer {
 			PARTY_TRACKER.onDisconnect();
 			CHAT_COLLECTOR.onDisconnect();
 			FINDER.onDisconnect();
-			HollowsWalkGame.stop("you left the server");
 		});
 
 		// The MansionFinder map in the corner of the screen. Everything below is reached from the G menu, not a chat command.
@@ -227,13 +225,9 @@ public class FemboyClientMod implements ClientModInitializer {
 				net.minecraft.resources.Identifier.fromNamespaceAndPath(MOD_ID, "hollows_map"), HollowsHud::extract);
 		net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry.addLast(
 				net.minecraft.resources.Identifier.fromNamespaceAndPath(MOD_ID, "frienemys"), FrienemiesHud::extract);
-		// Draws nothing: turns the view a little every frame while Hollows Walk steers, so it never moves in steps.
-		net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry.addLast(
-				net.minecraft.resources.Identifier.fromNamespaceAndPath(MOD_ID, "hollows_walk"), HollowsWalkGame::frame);
 		HollowsMapDrag.register();
 		LoopedClickerOverlay.register();
 		PlayerInfoKey.register();
-		HollowsWalkGame.register();
 
 		// Link this account to the website and start uploading. Does nothing until
 		// an enrollSecret (or apiKey) is in the config.
