@@ -15,6 +15,8 @@ import java.lang.reflect.Method;
  * <li>The chat window is {@code minecraft.gui.getChat()} in 26.1.2 and {@code minecraft.gui.hud.getChat()} in 26.2.</li>
  * <li>The game's main render target (what the screen is drawn on) is {@code minecraft.getMainRenderTarget()} in 26.1.2 and
  * {@code minecraft.gameRenderer.mainRenderTarget()} in 26.2.</li>
+ * <li>Gizmos drawn for one frame only are collected by {@code levelRenderer.collectPerFrameGizmos()} in 26.1.2 and
+ * {@code levelRenderer.collectPerFrameRenderThreadGizmos()} in 26.2.</li>
  * </ul>
  *
  * Both are looked up once by name (the names are not obfuscated in 26.x) and the one that exists is used.
@@ -33,6 +35,8 @@ public final class McCompat {
 	private static final Method RENDERER_MAIN_TARGET = method(net.minecraft.client.renderer.GameRenderer.class, "mainRenderTarget");
 	private static final Method GUI_GET_CHAT = method(net.minecraft.client.gui.Gui.class, "getChat");
 	private static final java.lang.reflect.Field GUI_HUD = field(net.minecraft.client.gui.Gui.class, "hud");
+	private static final Method PER_FRAME_GIZMOS = method(net.minecraft.client.renderer.LevelRenderer.class,
+			"collectPerFrameRenderThreadGizmos", "collectPerFrameGizmos");
 
 	private McCompat() {
 	}
@@ -43,6 +47,12 @@ public final class McCompat {
 		} catch (ReflectiveOperationException | RuntimeException e) {
 			return null;
 		}
+	}
+
+	/** The first of these no-argument methods that exists, or null. */
+	private static Method method(Class<?> owner, String name, String otherName) {
+		Method found = method(owner, name);
+		return found != null ? found : method(owner, otherName);
 	}
 
 	private static java.lang.reflect.Field field(Class<?> owner, String name) {
@@ -112,6 +122,21 @@ public final class McCompat {
 		} catch (ReflectiveOperationException | RuntimeException e) {
 			// no title: the party message still goes out
 		}
+	}
+
+	/**
+	 * Starts collecting gizmos that are drawn for one frame only, until the returned scope is closed; null when that cannot be
+	 * done (then gizmos still go where they went before).
+	 */
+	static net.minecraft.gizmos.Gizmos.TemporaryCollection perFrameGizmos(Minecraft mc) {
+		try {
+			if (PER_FRAME_GIZMOS != null && mc.levelRenderer != null) {
+				return (net.minecraft.gizmos.Gizmos.TemporaryCollection) PER_FRAME_GIZMOS.invoke(mc.levelRenderer);
+			}
+		} catch (ReflectiveOperationException | RuntimeException e) {
+			// fall through: no per-frame collection
+		}
+		return null;
 	}
 
 	/** The chat window (the messages above the chat box), or null when it cannot be found. */

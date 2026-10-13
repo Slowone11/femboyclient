@@ -133,34 +133,18 @@ public final class MinecraftChunks implements MansionFinder.Chunks {
 		}
 		Set<Block> wanted = blocksOf(kinds);
 		java.util.TreeMap<Integer, int[]> rows = new java.util.TreeMap<>();       // height -> {minX, minZ, maxX, maxZ, count}
-		LevelChunkSection[] sections = chunk.getSections();
-		for (int i = 0; i < sections.length; i++) {
-			LevelChunkSection section = sections[i];
-			if (section.hasOnlyAir() || !section.maybeHas((BlockState state) -> wanted.contains(state.getBlock()))) {
-				continue;
+		forEachBlock(chunk, chunkX, chunkZ, wanted, (wx, wy, wz) -> {
+			int[] row = rows.get(wy);
+			if (row == null) {
+				rows.put(wy, new int[] {wx, wz, wx, wz, 1});
+			} else {
+				row[0] = Math.min(row[0], wx);
+				row[1] = Math.min(row[1], wz);
+				row[2] = Math.max(row[2], wx);
+				row[3] = Math.max(row[3], wz);
+				row[4]++;
 			}
-			int baseY = chunk.getMinY() + i * 16;
-			for (int y = 0; y < 16; y++) {
-				for (int z = 0; z < 16; z++) {
-					for (int x = 0; x < 16; x++) {
-						if (!wanted.contains(section.getBlockState(x, y, z).getBlock())) {
-							continue;
-						}
-						int wx = chunkX * 16 + x, wz = chunkZ * 16 + z;
-						int[] row = rows.get(baseY + y);
-						if (row == null) {
-							rows.put(baseY + y, new int[] {wx, wz, wx, wz, 1});
-						} else {
-							row[0] = Math.min(row[0], wx);
-							row[1] = Math.min(row[1], wz);
-							row[2] = Math.max(row[2], wx);
-							row[3] = Math.max(row[3], wz);
-							row[4]++;
-						}
-					}
-				}
-			}
-		}
+		});
 		// Heights close together are one grotto; a real gap in height is another grotto stacked above or below it.
 		List<int[]> bands = new ArrayList<>();
 		int[] band = null;
@@ -250,8 +234,30 @@ public final class MinecraftChunks implements MansionFinder.Chunks {
 		if (chunk == null) {
 			return null;
 		}
-		int[] box = null;
-		Set<Block> wanted = blocksOf(kinds);
+		int[][] box = {null};
+		forEachBlock(chunk, chunkX, chunkZ, blocksOf(kinds), (wx, wy, wz) -> {
+			if (box[0] == null) {
+				box[0] = new int[] {wx, wy, wz, wx, wy, wz};
+			} else {
+				int[] b = box[0];
+				b[0] = Math.min(b[0], wx);
+				b[1] = Math.min(b[1], wy);
+				b[2] = Math.min(b[2], wz);
+				b[3] = Math.max(b[3], wx);
+				b[4] = Math.max(b[4], wy);
+				b[5] = Math.max(b[5], wz);
+			}
+		});
+		return box[0];
+	}
+
+	/** A block position in the world. */
+	private interface BlockVisitor {
+		void visit(int x, int y, int z);
+	}
+
+	/** Calls {@code visitor} with the world position of every block of the chunk that is one of {@code wanted}, bottom to top. */
+	private static void forEachBlock(LevelChunk chunk, int chunkX, int chunkZ, Set<Block> wanted, BlockVisitor visitor) {
 		LevelChunkSection[] sections = chunk.getSections();
 		for (int i = 0; i < sections.length; i++) {
 			LevelChunkSection section = sections[i];
@@ -265,21 +271,10 @@ public final class MinecraftChunks implements MansionFinder.Chunks {
 						if (!wanted.contains(section.getBlockState(x, y, z).getBlock())) {
 							continue;
 						}
-						int wx = chunkX * 16 + x, wy = baseY + y, wz = chunkZ * 16 + z;
-						if (box == null) {
-							box = new int[] {wx, wy, wz, wx, wy, wz};
-						} else {
-							box[0] = Math.min(box[0], wx);
-							box[1] = Math.min(box[1], wy);
-							box[2] = Math.min(box[2], wz);
-							box[3] = Math.max(box[3], wx);
-							box[4] = Math.max(box[4], wy);
-							box[5] = Math.max(box[5], wz);
-						}
+						visitor.visit(chunkX * 16 + x, baseY + y, chunkZ * 16 + z);
 					}
 				}
 			}
 		}
-		return box;
 	}
 }

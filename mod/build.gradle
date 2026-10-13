@@ -53,6 +53,11 @@ dependencies {
 	include("io.netty:netty-handler-proxy:${project.netty_version}") { transitive = false }
 	include("io.netty:netty-codec-socks:${project.netty_version}") { transitive = false }
 
+	// The Wiki Bar's page reader (WikiHtml): Jsoup turns a wiki page's HTML into the panel's layout. It has no dependencies of
+	// its own and is bundled in the jar.
+	implementation "org.jsoup:jsoup:${project.jsoup_version}"
+	include("org.jsoup:jsoup:${project.jsoup_version}")
+
 	// Unit tests (run with: gradlew test).
 	testImplementation platform('org.junit:junit-bom:6.1.3')
 	testImplementation 'org.junit.jupiter:junit-jupiter'

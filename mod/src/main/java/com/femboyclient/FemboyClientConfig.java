@@ -127,6 +127,18 @@ public final class FemboyClientConfig {
 	 */
 	public boolean handMan = false;
 
+	/** Wiki Bar (see WikiBar): the calculator and wiki search bar under inventory screens. */
+	public boolean wikiBar = true;
+	/** Where the Wiki Bar's page panel floats after it was dragged, in GUI pixels; -1: docked beside the inventory. */
+	public int wikiPanelX = -1, wikiPanelY = -1;
+	/** Where the Wiki Bar sits after it was dragged (its center x and its top y), in GUI pixels; -1: under the inventory. */
+	public int wikiBarX = -1, wikiBarY = -1;
+
+	/** Pet Swapper (see PetSwapper): Bal when Crystal Hollows heat goes up, the pet you had before when it goes down. */
+	public boolean petSwapper = false;
+	/** The pet Pet Swapper swaps back to: the last pet other than Bal you had out. Learned in game; empty until then. */
+	public String petSwapBack = "";
+
 	/** Copy Chat (see CopyChat): right click a chat message to copy it. The key (-1 = none) keeps colour codes while held. */
 	public boolean copyChat = false, copyChatSendMessage = true;
 	public int copyChatKey = -1;
@@ -138,6 +150,10 @@ public final class FemboyClientConfig {
 	/** Chest ESP (see ChestEsp). Mode 0 is Chams, 1 is Outline. The colour is ARGB. */
 	public boolean chestEsp = false, chestEspOnlyDungeon = false, chestEspOnlyHollows = false, chestEspHideClicked = false;
 	public int chestEspMode = 0, chestEspColor = 0xFFFF0000;
+
+	/** Starred Mobs (see StarredMobs). Mode 0 is Chams, 1 is Outline. The colour is ARGB. */
+	public boolean starredMobs = false;
+	public int starredMobsMode = 0, starredMobsColor = 0xFFFFFF00;
 
 	/** Ghost Blocks (see GhostBlocks). Speed in milliseconds, range in tenths of a block, key -1 when not set. */
 	public boolean ghostBlocks = false, ghostBlocksSkulls = true, ghostBlocksOnlyDungeon = false, ghostBlocksF7 = false;
@@ -323,128 +339,69 @@ public final class FemboyClientConfig {
 		return List.copyOf(out);
 	}
 
+	/**
+	 * Every setting the file holds: each public field, under its own name, except updateRepo and updateToken (see updateRepo). A new
+	 * public field is read and saved with no other change; a number with a range also needs a line in {@link #clampAll()}.
+	 */
+	private static final List<java.lang.reflect.Field> SETTINGS = java.util.Arrays.stream(FemboyClientConfig.class.getFields())
+			.filter(f -> !java.lang.reflect.Modifier.isStatic(f.getModifiers()))
+			.filter(f -> !f.getName().equals("updateRepo") && !f.getName().equals("updateToken"))
+			.toList();
+
+	/** Text settings where a blank value is not meaningful, so it keeps the previous one (a blank line in an old file must not wipe the built-in one). */
+	private static final java.util.Set<String> NO_BLANK = java.util.Set.of("serverUrl", "enrollSecret", "proxyType");
+
 	/** Copies over every value present in the properties, ignoring bad ones. */
+	@SuppressWarnings("unchecked")
 	private void apply(Properties props) {
-		enabled = bool(props, "enabled", enabled);
-		lobbyNetworth = bool(props, "lobbyNetworth", lobbyNetworth);
-		serverUrl = text(props, "serverUrl", serverUrl, false);
-		serverDir = text(props, "serverDir", serverDir, true);
-		enrollSecret = text(props, "enrollSecret", enrollSecret, false);      // a blank line in an old file must not wipe the built-in one
-		apiKey = text(props, "apiKey", apiKey, true);
-		uploadIntervalSeconds = integer(props, "uploadIntervalSeconds", uploadIntervalSeconds);
-		hud = bool(props, "hud", hud);
-		scanRenderBoost = bool(props, "scanRenderBoost", scanRenderBoost);
-		liveInput = bool(props, "liveInput", liveInput);
-		npcAuto = bool(props, "npcAuto", npcAuto);
-		frienemys = bool(props, "frienemys", frienemys);
-		fullbright = bool(props, "fullbright", fullbright);
-		keepsprint = bool(props, "keepsprint", keepsprint);
-		noParticles = bool(props, "noParticles", noParticles);
-		handMan = bool(props, "handMan", handMan);
-		copyChat = bool(props, "copyChat", copyChat);
-		copyChatSendMessage = bool(props, "copyChatSendMessage", copyChatSendMessage);
-		copyChatKey = integer(props, "copyChatKey", copyChatKey);
-		hidePlayers = bool(props, "hidePlayers", hidePlayers);
-		hidePlayersAll = bool(props, "hidePlayersAll", hidePlayersAll);
-		hidePlayersClickThrough = bool(props, "hidePlayersClickThrough", hidePlayersClickThrough);
-		hidePlayersOnlyDevs = bool(props, "hidePlayersOnlyDevs", hidePlayersOnlyDevs);
-		hidePlayersDistance = HidePlayers.DISTANCE.clamp(integer(props, "hidePlayersDistance", hidePlayersDistance));
-		chestEsp = bool(props, "chestEsp", chestEsp);
-		chestEspOnlyDungeon = bool(props, "chestEspOnlyDungeon", chestEspOnlyDungeon);
-		chestEspOnlyHollows = bool(props, "chestEspOnlyHollows", chestEspOnlyHollows);
-		chestEspHideClicked = bool(props, "chestEspHideClicked", chestEspHideClicked);
-		chestEspMode = Math.max(0, Math.min(1, integer(props, "chestEspMode", chestEspMode)));
-		chestEspColor = integer(props, "chestEspColor", chestEspColor);
-		ghostBlocks = bool(props, "ghostBlocks", ghostBlocks);
-		ghostBlocksSkulls = bool(props, "ghostBlocksSkulls", ghostBlocksSkulls);
-		ghostBlocksOnlyDungeon = bool(props, "ghostBlocksOnlyDungeon", ghostBlocksOnlyDungeon);
-		ghostBlocksF7 = bool(props, "ghostBlocksF7", ghostBlocksF7);
-		teammatesHighlight = bool(props, "teammatesHighlight", teammatesHighlight);
-		teammatesShowClass = bool(props, "teammatesShowClass", teammatesShowClass);
-		teammatesOutline = bool(props, "teammatesOutline", teammatesOutline);
-		teammatesName = bool(props, "teammatesName", teammatesName);
-		teammatesWhenVisible = bool(props, "teammatesWhenVisible", teammatesWhenVisible);
-		teammatesInBoss = bool(props, "teammatesInBoss", teammatesInBoss);
-		secretHitboxes = bool(props, "secretHitboxes", secretHitboxes);
-		secretHitboxesLever = bool(props, "secretHitboxesLever", secretHitboxesLever);
-		secretHitboxesButton = bool(props, "secretHitboxesButton", secretHitboxesButton);
-		secretHitboxesEssence = bool(props, "secretHitboxesEssence", secretHitboxesEssence);
-		secretHitboxesChests = bool(props, "secretHitboxesChests", secretHitboxesChests);
-		puzzleSolvers = bool(props, "puzzleSolvers", puzzleSolvers);
-		puzzleWater = bool(props, "puzzleWater", puzzleWater);
-		puzzleWaterOrder = bool(props, "puzzleWaterOrder", puzzleWaterOrder);
-		puzzleWaterTracer = bool(props, "puzzleWaterTracer", puzzleWaterTracer);
-		puzzleTpMaze = bool(props, "puzzleTpMaze", puzzleTpMaze);
-		puzzleTpMazeThroughWalls = bool(props, "puzzleTpMazeThroughWalls", puzzleTpMazeThroughWalls);
-		puzzleTtt = bool(props, "puzzleTtt", puzzleTtt);
-		puzzleIceFill = bool(props, "puzzleIceFill", puzzleIceFill);
-		puzzleBlaze = bool(props, "puzzleBlaze", puzzleBlaze);
-		puzzleBlazeLineNext = bool(props, "puzzleBlazeLineNext", puzzleBlazeLineNext);
-		camera = bool(props, "camera", camera);
-		cameraNoFront = bool(props, "cameraNoFront", cameraNoFront);
-		cameraClip = bool(props, "cameraClip", cameraClip);
-		freelookToggle = bool(props, "freelookToggle", freelookToggle);
-		serverDisplay = bool(props, "serverDisplay", serverDisplay);
-		serverDisplayPing = bool(props, "serverDisplayPing", serverDisplayPing);
-		serverDisplayTps = bool(props, "serverDisplayTps", serverDisplayTps);
-		serverDisplayFps = bool(props, "serverDisplayFps", serverDisplayFps);
-		chatCommands = bool(props, "chatCommands", chatCommands);
-		chatCommandsParty = bool(props, "chatCommandsParty", chatCommandsParty);
-		chatCommandsGuild = bool(props, "chatCommandsGuild", chatCommandsGuild);
-		chatCommandsPrivate = bool(props, "chatCommandsPrivate", chatCommandsPrivate);
-		noDebuff = bool(props, "noDebuff", noDebuff);
-		noDebuffBlindness = bool(props, "noDebuffBlindness", noDebuffBlindness);
-		noDebuffPortal = bool(props, "noDebuffPortal", noDebuffPortal);
-		noDebuffShieldParticles = bool(props, "noDebuffShieldParticles", noDebuffShieldParticles);
-		noDebuffWaterFov = bool(props, "noDebuffWaterFov", noDebuffWaterFov);
-		noDebuffFire = bool(props, "noDebuffFire", noDebuffFire);
-		noDebuffPush = bool(props, "noDebuffPush", noDebuffPush);
-		noDebuffSeeThrough = bool(props, "noDebuffSeeThrough", noDebuffSeeThrough);
-		ghostBlocksKey = integer(props, "ghostBlocksKey", ghostBlocksKey);
-		ghostBlocksSpeed = GhostBlocks.SPEED.clamp(integer(props, "ghostBlocksSpeed", ghostBlocksSpeed));
-		ghostBlocksRange = GhostBlocks.RANGE.clamp(integer(props, "ghostBlocksRange", ghostBlocksRange));
-		puzzleBlazeLines = PuzzleSolvers.BLAZE_LINES.clamp(integer(props, "puzzleBlazeLines", puzzleBlazeLines));
-		cameraDistance = CameraTweaks.DISTANCE.clamp(integer(props, "cameraDistance", cameraDistance));
-		freelookKey = integer(props, "freelookKey", freelookKey);
-		serverDisplayX = ServerDisplay.POSITION.clamp(integer(props, "serverDisplayX", serverDisplayX));
-		serverDisplayY = ServerDisplay.POSITION.clamp(integer(props, "serverDisplayY", serverDisplayY));
-		serverDisplayScale = ServerDisplay.SCALE.clamp(integer(props, "serverDisplayScale", serverDisplayScale));
-		puzzleBlazeStyle = Math.max(0, Math.min(2, integer(props, "puzzleBlazeStyle", puzzleBlazeStyle)));
-		serverDisplayStacked = Math.max(0, Math.min(1, integer(props, "serverDisplayStacked", serverDisplayStacked)));
-		chatCommandsOff = words(props, "chatCommandsOff", chatCommandsOff);
-		chatCommandsBlacklist = words(props, "chatCommandsBlacklist", chatCommandsBlacklist);
-		keyHighlight = bool(props, "keyHighlight", keyHighlight);
-		keyHighlightThickness = KeyHighlight.THICKNESS.clamp(integer(props, "keyHighlightThickness", keyHighlightThickness));
-		handSize = HandMan.SIZE.clamp(integer(props, "handSize", handSize));
-		handX = HandMan.X.clamp(integer(props, "handX", handX));
-		handY = HandMan.Y.clamp(integer(props, "handY", handY));
-		handZ = HandMan.Z.clamp(integer(props, "handZ", handZ));
-		handYaw = HandMan.ROTATION.clamp(integer(props, "handYaw", handYaw));
-		handPitch = HandMan.ROTATION.clamp(integer(props, "handPitch", handPitch));
-		handRoll = HandMan.ROTATION.clamp(integer(props, "handRoll", handRoll));
-		handSpeed = HandMan.SPEED.clamp(integer(props, "handSpeed", handSpeed));
-		handIgnoreHaste = bool(props, "handIgnoreHaste", handIgnoreHaste);
-		handBlockHit = bool(props, "handBlockHit", handBlockHit);
-		handNoEquipReset = bool(props, "handNoEquipReset", handNoEquipReset);
-		handNoSwing = bool(props, "handNoSwing", handNoSwing);
-		handNoBlock = bool(props, "handNoBlock", handNoBlock);
-		clicker = bool(props, "clicker", clicker);
-		clickerRightClick = bool(props, "clickerRightClick", clickerRightClick);
-		clickerMs = Math.max(LoopedClicker.MIN_MS, Math.min(LoopedClicker.MAX_MS, integer(props, "clickerMs", clickerMs)));
-		clickerX = integer(props, "clickerX", clickerX);
-		clickerY = integer(props, "clickerY", clickerY);
-		clickerKey = integer(props, "clickerKey", clickerKey);
-		clickerPanelX = integer(props, "clickerPanelX", clickerPanelX);
-		clickerPanelY = integer(props, "clickerPanelY", clickerPanelY);
-		hudX = Math.max(0, integer(props, "hudX", hudX));
-		hudY = Math.max(0, integer(props, "hudY", hudY));
-		hudSize = Math.max(HollowsHud.MIN_SIZE, Math.min(HollowsHud.MAX_SIZE, integer(props, "hudSize", hudSize)));
-		proxyEnabled = bool(props, "proxyEnabled", proxyEnabled);
-		proxyType = ProxySettings.Type.parse(text(props, "proxyType", proxyType, false)).name();
-		proxyHost = text(props, "proxyHost", proxyHost, true);
-		proxyPort = integer(props, "proxyPort", proxyPort);
-		proxyUsername = text(props, "proxyUsername", proxyUsername, true);
-		proxyPassword = text(props, "proxyPassword", proxyPassword, true);
+		try {
+			for (java.lang.reflect.Field field : SETTINGS) {
+				String key = field.getName();
+				Class<?> type = field.getType();
+				if (type == boolean.class) {
+					field.setBoolean(this, bool(props, key, field.getBoolean(this)));
+				} else if (type == int.class) {
+					field.setInt(this, integer(props, key, field.getInt(this)));
+				} else if (type == String.class) {
+					field.set(this, text(props, key, (String) field.get(this), !NO_BLANK.contains(key)));
+				} else if (type == java.util.Set.class) {
+					field.set(this, words(props, key, (java.util.Set<String>) field.get(this)));
+				}
+			}
+		} catch (IllegalAccessException e) {
+			throw new IllegalStateException(e);           // every setting is a public field of this class: cannot happen
+		}
+		proxyType = ProxySettings.Type.parse(proxyType).name();
+		clampAll();
+	}
+
+	/** Pulls every number that has a range back into it, so a hand-edited file cannot break a module. */
+	private void clampAll() {
+		hidePlayersDistance = HidePlayers.DISTANCE.clamp(hidePlayersDistance);
+		chestEspMode = Math.max(0, Math.min(1, chestEspMode));
+		starredMobsMode = Math.max(0, Math.min(1, starredMobsMode));
+		ghostBlocksSpeed = GhostBlocks.SPEED.clamp(ghostBlocksSpeed);
+		ghostBlocksRange = GhostBlocks.RANGE.clamp(ghostBlocksRange);
+		puzzleBlazeLines = PuzzleSolvers.BLAZE_LINES.clamp(puzzleBlazeLines);
+		cameraDistance = CameraTweaks.DISTANCE.clamp(cameraDistance);
+		serverDisplayX = ServerDisplay.POSITION.clamp(serverDisplayX);
+		serverDisplayY = ServerDisplay.POSITION.clamp(serverDisplayY);
+		serverDisplayScale = ServerDisplay.SCALE.clamp(serverDisplayScale);
+		puzzleBlazeStyle = Math.max(0, Math.min(2, puzzleBlazeStyle));
+		serverDisplayStacked = Math.max(0, Math.min(1, serverDisplayStacked));
+		keyHighlightThickness = KeyHighlight.THICKNESS.clamp(keyHighlightThickness);
+		handSize = HandMan.SIZE.clamp(handSize);
+		handX = HandMan.X.clamp(handX);
+		handY = HandMan.Y.clamp(handY);
+		handZ = HandMan.Z.clamp(handZ);
+		handYaw = HandMan.ROTATION.clamp(handYaw);
+		handPitch = HandMan.ROTATION.clamp(handPitch);
+		handRoll = HandMan.ROTATION.clamp(handRoll);
+		handSpeed = HandMan.SPEED.clamp(handSpeed);
+		clickerMs = Math.max(LoopedClicker.MIN_MS, Math.min(LoopedClicker.MAX_MS, clickerMs));
+		hudX = Math.max(0, hudX);
+		hudY = Math.max(0, hudY);
+		hudSize = Math.max(HollowsHud.MIN_SIZE, Math.min(HollowsHud.MAX_SIZE, hudSize));
 	}
 
 	/** The proxy settings as one value, whether or not the proxy is switched on. */
@@ -466,128 +423,18 @@ public final class FemboyClientConfig {
 	}
 
 	/** Every setting as the text the file holds. Both save() and the "is the file missing a key" check use this. Package-private for tests. */
+	@SuppressWarnings("unchecked")
 	Properties toProperties() {
 		Properties props = new Properties();
-		props.setProperty("enabled", Boolean.toString(enabled));
-		props.setProperty("lobbyNetworth", Boolean.toString(lobbyNetworth));
-		props.setProperty("serverUrl", serverUrl);
-		props.setProperty("serverDir", serverDir);
-		props.setProperty("enrollSecret", enrollSecret);
-		props.setProperty("apiKey", apiKey);
-		props.setProperty("uploadIntervalSeconds", Integer.toString(uploadIntervalSeconds));
-		props.setProperty("hud", Boolean.toString(hud));
-		props.setProperty("scanRenderBoost", Boolean.toString(scanRenderBoost));
-		props.setProperty("liveInput", Boolean.toString(liveInput));
-		props.setProperty("npcAuto", Boolean.toString(npcAuto));
-		props.setProperty("frienemys", Boolean.toString(frienemys));
-		props.setProperty("fullbright", Boolean.toString(fullbright));
-		props.setProperty("keepsprint", Boolean.toString(keepsprint));
-		props.setProperty("noParticles", Boolean.toString(noParticles));
-		props.setProperty("handMan", Boolean.toString(handMan));
-		props.setProperty("copyChat", Boolean.toString(copyChat));
-		props.setProperty("copyChatSendMessage", Boolean.toString(copyChatSendMessage));
-		props.setProperty("copyChatKey", Integer.toString(copyChatKey));
-		props.setProperty("hidePlayers", Boolean.toString(hidePlayers));
-		props.setProperty("hidePlayersAll", Boolean.toString(hidePlayersAll));
-		props.setProperty("hidePlayersClickThrough", Boolean.toString(hidePlayersClickThrough));
-		props.setProperty("hidePlayersOnlyDevs", Boolean.toString(hidePlayersOnlyDevs));
-		props.setProperty("hidePlayersDistance", Integer.toString(hidePlayersDistance));
-		props.setProperty("chestEsp", Boolean.toString(chestEsp));
-		props.setProperty("chestEspOnlyDungeon", Boolean.toString(chestEspOnlyDungeon));
-		props.setProperty("chestEspOnlyHollows", Boolean.toString(chestEspOnlyHollows));
-		props.setProperty("chestEspHideClicked", Boolean.toString(chestEspHideClicked));
-		props.setProperty("chestEspMode", Integer.toString(chestEspMode));
-		props.setProperty("chestEspColor", Integer.toString(chestEspColor));
-		props.setProperty("ghostBlocks", Boolean.toString(ghostBlocks));
-		props.setProperty("ghostBlocksSkulls", Boolean.toString(ghostBlocksSkulls));
-		props.setProperty("ghostBlocksOnlyDungeon", Boolean.toString(ghostBlocksOnlyDungeon));
-		props.setProperty("ghostBlocksF7", Boolean.toString(ghostBlocksF7));
-		props.setProperty("teammatesHighlight", Boolean.toString(teammatesHighlight));
-		props.setProperty("teammatesShowClass", Boolean.toString(teammatesShowClass));
-		props.setProperty("teammatesOutline", Boolean.toString(teammatesOutline));
-		props.setProperty("teammatesName", Boolean.toString(teammatesName));
-		props.setProperty("teammatesWhenVisible", Boolean.toString(teammatesWhenVisible));
-		props.setProperty("teammatesInBoss", Boolean.toString(teammatesInBoss));
-		props.setProperty("secretHitboxes", Boolean.toString(secretHitboxes));
-		props.setProperty("secretHitboxesLever", Boolean.toString(secretHitboxesLever));
-		props.setProperty("secretHitboxesButton", Boolean.toString(secretHitboxesButton));
-		props.setProperty("secretHitboxesEssence", Boolean.toString(secretHitboxesEssence));
-		props.setProperty("secretHitboxesChests", Boolean.toString(secretHitboxesChests));
-		props.setProperty("puzzleSolvers", Boolean.toString(puzzleSolvers));
-		props.setProperty("puzzleWater", Boolean.toString(puzzleWater));
-		props.setProperty("puzzleWaterOrder", Boolean.toString(puzzleWaterOrder));
-		props.setProperty("puzzleWaterTracer", Boolean.toString(puzzleWaterTracer));
-		props.setProperty("puzzleTpMaze", Boolean.toString(puzzleTpMaze));
-		props.setProperty("puzzleTpMazeThroughWalls", Boolean.toString(puzzleTpMazeThroughWalls));
-		props.setProperty("puzzleTtt", Boolean.toString(puzzleTtt));
-		props.setProperty("puzzleIceFill", Boolean.toString(puzzleIceFill));
-		props.setProperty("puzzleBlaze", Boolean.toString(puzzleBlaze));
-		props.setProperty("puzzleBlazeLineNext", Boolean.toString(puzzleBlazeLineNext));
-		props.setProperty("camera", Boolean.toString(camera));
-		props.setProperty("cameraNoFront", Boolean.toString(cameraNoFront));
-		props.setProperty("cameraClip", Boolean.toString(cameraClip));
-		props.setProperty("freelookToggle", Boolean.toString(freelookToggle));
-		props.setProperty("serverDisplay", Boolean.toString(serverDisplay));
-		props.setProperty("serverDisplayPing", Boolean.toString(serverDisplayPing));
-		props.setProperty("serverDisplayTps", Boolean.toString(serverDisplayTps));
-		props.setProperty("serverDisplayFps", Boolean.toString(serverDisplayFps));
-		props.setProperty("chatCommands", Boolean.toString(chatCommands));
-		props.setProperty("chatCommandsParty", Boolean.toString(chatCommandsParty));
-		props.setProperty("chatCommandsGuild", Boolean.toString(chatCommandsGuild));
-		props.setProperty("chatCommandsPrivate", Boolean.toString(chatCommandsPrivate));
-		props.setProperty("noDebuff", Boolean.toString(noDebuff));
-		props.setProperty("noDebuffBlindness", Boolean.toString(noDebuffBlindness));
-		props.setProperty("noDebuffPortal", Boolean.toString(noDebuffPortal));
-		props.setProperty("noDebuffShieldParticles", Boolean.toString(noDebuffShieldParticles));
-		props.setProperty("noDebuffWaterFov", Boolean.toString(noDebuffWaterFov));
-		props.setProperty("noDebuffFire", Boolean.toString(noDebuffFire));
-		props.setProperty("noDebuffPush", Boolean.toString(noDebuffPush));
-		props.setProperty("noDebuffSeeThrough", Boolean.toString(noDebuffSeeThrough));
-		props.setProperty("ghostBlocksKey", Integer.toString(ghostBlocksKey));
-		props.setProperty("ghostBlocksSpeed", Integer.toString(ghostBlocksSpeed));
-		props.setProperty("ghostBlocksRange", Integer.toString(ghostBlocksRange));
-		props.setProperty("puzzleBlazeLines", Integer.toString(puzzleBlazeLines));
-		props.setProperty("cameraDistance", Integer.toString(cameraDistance));
-		props.setProperty("freelookKey", Integer.toString(freelookKey));
-		props.setProperty("serverDisplayX", Integer.toString(serverDisplayX));
-		props.setProperty("serverDisplayY", Integer.toString(serverDisplayY));
-		props.setProperty("serverDisplayScale", Integer.toString(serverDisplayScale));
-		props.setProperty("puzzleBlazeStyle", Integer.toString(puzzleBlazeStyle));
-		props.setProperty("serverDisplayStacked", Integer.toString(serverDisplayStacked));
-		props.setProperty("chatCommandsOff", String.join(",", chatCommandsOff));
-		props.setProperty("chatCommandsBlacklist", String.join(",", chatCommandsBlacklist));
-		props.setProperty("keyHighlight", Boolean.toString(keyHighlight));
-		props.setProperty("keyHighlightThickness", Integer.toString(keyHighlightThickness));
-		props.setProperty("handSize", Integer.toString(handSize));
-		props.setProperty("handX", Integer.toString(handX));
-		props.setProperty("handY", Integer.toString(handY));
-		props.setProperty("handZ", Integer.toString(handZ));
-		props.setProperty("handYaw", Integer.toString(handYaw));
-		props.setProperty("handPitch", Integer.toString(handPitch));
-		props.setProperty("handRoll", Integer.toString(handRoll));
-		props.setProperty("handSpeed", Integer.toString(handSpeed));
-		props.setProperty("handIgnoreHaste", Boolean.toString(handIgnoreHaste));
-		props.setProperty("handBlockHit", Boolean.toString(handBlockHit));
-		props.setProperty("handNoEquipReset", Boolean.toString(handNoEquipReset));
-		props.setProperty("handNoSwing", Boolean.toString(handNoSwing));
-		props.setProperty("handNoBlock", Boolean.toString(handNoBlock));
-		props.setProperty("clicker", Boolean.toString(clicker));
-		props.setProperty("clickerRightClick", Boolean.toString(clickerRightClick));
-		props.setProperty("clickerMs", Integer.toString(clickerMs));
-		props.setProperty("clickerX", Integer.toString(clickerX));
-		props.setProperty("clickerY", Integer.toString(clickerY));
-		props.setProperty("clickerKey", Integer.toString(clickerKey));
-		props.setProperty("clickerPanelX", Integer.toString(clickerPanelX));
-		props.setProperty("clickerPanelY", Integer.toString(clickerPanelY));
-		props.setProperty("hudX", Integer.toString(hudX));
-		props.setProperty("hudY", Integer.toString(hudY));
-		props.setProperty("hudSize", Integer.toString(hudSize));
-		props.setProperty("proxyEnabled", Boolean.toString(proxyEnabled));
-		props.setProperty("proxyType", proxyType);
-		props.setProperty("proxyHost", proxyHost);
-		props.setProperty("proxyPort", Integer.toString(proxyPort));
-		props.setProperty("proxyUsername", proxyUsername);
-		props.setProperty("proxyPassword", proxyPassword);
+		try {
+			for (java.lang.reflect.Field field : SETTINGS) {
+				Object value = field.get(this);
+				props.setProperty(field.getName(), value instanceof java.util.Set<?> set
+						? String.join(",", (java.util.Set<String>) set) : String.valueOf(value));
+			}
+		} catch (IllegalAccessException e) {
+			throw new IllegalStateException(e);
+		}
 		return props;
 	}
 

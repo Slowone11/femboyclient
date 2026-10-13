@@ -54,6 +54,8 @@ public final class Theme {
 	/** Secondary text: the same gray-pink at 75%. */
 	public static final int TEXT_DIM = 0xBFB79AAE;
 	public static final int TEXT_ERROR = 0xFFFF6B7A;
+	/** Done, enough: the planner's "1/1 ✓". The rank badges' green. */
+	public static final int TEXT_OK = 0xFF55E07A;
 
 	/** Shadows are black, at this opacity right under the shape, fading smoothly to nothing over the spread. */
 	public static final int SHADOW_COLOR = 0x000000;
@@ -74,6 +76,21 @@ public final class Theme {
 	/** Rank badges, in the order of {@link Ranks.Style}: green, aqua, gold, red, blue, dark green. Fill, then the text on it. */
 	public static final int[] RANK_FILL = {0xFF55E07A, 0xFF4FD8F0, 0xFFFFB02E, 0xFFE5484D, 0xFF4E6BFF, 0xFF1F9D55};
 	public static final int[] RANK_TEXT = {0xFF06210F, 0xFF04222A, 0xFF2B1A00, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF};
+
+	/**
+	 * SkyBlock rarities, as rank-style badges (fill, then the text on it): the colors players know (Legendary gold, Epic purple),
+	 * softened to sit next to the pink and plum. Same order as {@link #RARITIES}.
+	 */
+	public static final String[] RARITIES = {"COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY", "MYTHIC", "DIVINE", "SPECIAL",
+			"VERY SPECIAL", "ULTIMATE", "ADMIN"};
+	public static final int[] RARITY_FILL = {0xFFE4DDE6, 0xFF55E07A, 0xFF4E6BFF, 0xFFB45CFF, 0xFFFFB02E, 0xFFFF6BD6, 0xFF4FD8F0,
+			0xFFE5484D, 0xFFE5484D, 0xFFC4304A, 0xFF9E1F2E};
+	public static final int[] RARITY_TEXT = {0xFF2A2230, 0xFF06210F, 0xFFFFFFFF, 0xFFFFFFFF, 0xFF2B1A00, 0xFF3A0A2E, 0xFF04222A,
+			0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF};
+
+	/** Links in wiki text, and a link under the mouse. */
+	public static final int TEXT_LINK = ACCENT_LIGHT;
+	public static final int TEXT_LINK_HOVER = ACCENT;
 
 	// ------------------------------------------------------------ fonts
 
@@ -135,6 +152,16 @@ public final class Theme {
 	public static final int MODEL_MIN_RIGHT_WIDTH = 396;
 	public static final int MODEL_SCALE = 90;
 
+	/** The Wiki Bar's page panel, right of the inventory: at most this wide; narrower than MIN it goes compact, than COMPACT_MIN hidden. */
+	public static final int WIKI_PANEL_MAX_WIDTH = 260;
+	public static final int WIKI_PANEL_MIN_WIDTH = 150;
+	public static final int WIKI_PANEL_COMPACT_MIN_WIDTH = 70;
+	public static final int WIKI_HEADER_HEIGHT = 56;
+	public static final int WIKI_ICON_BUTTON = 16;
+	public static final int WIKI_IMAGE_SIZE = 32;
+	/** One row of the Wiki Bar's suggestions. */
+	public static final int SUGGESTION_ROW_HEIGHT = 18;
+
 	// ------------------------------------------------------------ motion
 
 	/** The window slides up to this many pixels against the mouse. */
@@ -159,6 +186,8 @@ public final class Theme {
 	/** "Copied!" stays this long, then fades out over the second time. */
 	public static final int TOAST_MS = 1500;
 	public static final int TOAST_FADE_MS = 300;
+	/** The Wiki Bar waits this long after the last key before asking the wiki for suggestions. */
+	public static final int SEARCH_DEBOUNCE_MS = 300;
 	/** The search caret blinks with this period. */
 	public static final int CARET_BLINK_MS = 1000;
 	/** The panel's colors drift slowly through one cycle in this time, and a few faint particles float up behind the cards. */

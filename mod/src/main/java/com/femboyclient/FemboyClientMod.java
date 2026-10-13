@@ -16,7 +16,7 @@ import java.nio.file.Path;
  *
  * Mostly passive: it reads data the client already has (sidebar, tab list, chat) and talks to your own
  * website. It only sends commands, chat or clicks to the game for a feature that is switched on
- * (Player Finder, Auto Conversation, Looped Clicker, Hollows Walk, remote commands from the website).
+ * (Player Finder, Auto Conversation, Looped Clicker, Hollows Walk, Pet Swapper, remote commands from the website).
  */
 public class FemboyClientMod implements ClientModInitializer {
 
@@ -155,6 +155,7 @@ public class FemboyClientMod implements ClientModInitializer {
 			KeyHighlight.onChatLine(line);
 			ChatCommands.onChatLine(line);
 			CHAT_COLLECTOR.onLine(line);
+			PetSwapper.onChatLine(line);
 		}
 	}
 	@Override
@@ -202,8 +203,10 @@ public class FemboyClientMod implements ClientModInitializer {
 			CameraTweaks.tick(client);
 			ChatCommands.tick(client);
 			ChestEsp.tick(client);
+			StarredMobs.tick(client);
 			KeyHighlight.tick(client);
 			LoopedClicker.tick(client);
+			PetSwapper.tick(client);
 			FINDER.tick();
 			Chat.onTick(client);
 		});
@@ -217,6 +220,7 @@ public class FemboyClientMod implements ClientModInitializer {
 			PARTY_TRACKER.onDisconnect();
 			CHAT_COLLECTOR.onDisconnect();
 			FINDER.onDisconnect();
+			PetSwapper.onDisconnect();
 		});
 
 		// The MansionFinder map in the corner of the screen. Everything below is reached from the G menu, not a chat command.
@@ -227,8 +231,10 @@ public class FemboyClientMod implements ClientModInitializer {
 		HollowsMapDrag.register();
 		LoopedClickerOverlay.register();
 		PlayerInfoKey.register();
+		WikiBar.register();
 		CopyChat.register();
 		ChestEsp.register();
+		StarredMobs.register();
 		PuzzleSolvers.register();
 		ChatCommands.register();
 		ProxyButton.register();

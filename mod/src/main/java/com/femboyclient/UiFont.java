@@ -50,6 +50,11 @@ public final class UiFont {
 	private UiFont() {
 	}
 
+	/** The style that puts a text in a face, to build mixed texts (wiki paragraphs) from. */
+	public static Style style(Face face) {
+		return STYLES[face.ordinal()];
+	}
+
 	/** A text in a face, for wrapping it into lines. Anything the font lacks (symbols, other alphabets) falls back to the game's own glyphs. */
 	public static Component component(String text, Face face) {
 		return Component.literal(text).withStyle(STYLES[face.ordinal()]);

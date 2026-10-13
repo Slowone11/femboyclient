@@ -39,12 +39,13 @@ public final class ClientMenuScreen extends Screen {
 
 	static final int MANSION = 0, SCANNER = 1, NPC = 2, LOBBY = 3, FRIENEMYS = 4, FULLBRIGHT = 5, KEEPSPRINT = 6, CLICKER = 7,
 			PARTICLES = 8, HANDMAN = 9, COPY_CHAT = 10, HIDE_PLAYERS = 11, CHEST_ESP = 12, GHOST_BLOCKS = 13, KEY_HIGHLIGHT = 14,
-			TEAMMATES = 15, SECRET_HITBOXES = 16, PUZZLES = 17, CAMERA = 18, SERVER_DISPLAY = 19, CHAT_COMMANDS = 20, NO_DEBUFF = 21;
+			TEAMMATES = 15, SECRET_HITBOXES = 16, PUZZLES = 17, CAMERA = 18, SERVER_DISPLAY = 19, CHAT_COMMANDS = 20, NO_DEBUFF = 21,
+			WIKI_BAR = 22, PET_SWAPPER = 23, STARRED_MOBS = 24;
 
 	/** The tabs above the module list. All lists every module; Dungeons only the dungeon ones. */
 	private static final String[] TABS = {"All", "Dungeons"};
 	private static final java.util.Set<Integer> DUNGEON_MODULES = java.util.Set.of(GHOST_BLOCKS, KEY_HIGHLIGHT, TEAMMATES,
-			SECRET_HITBOXES, PUZZLES);
+			SECRET_HITBOXES, PUZZLES, STARRED_MOBS);
 	private static final int TAB_H = 20;
 
 	/** One module: its name, what it does, and its switch (null for the scanner, which is always on). */
@@ -54,39 +55,21 @@ public final class ClientMenuScreen extends Screen {
 
 	private static final List<Module> MODULES = List.of(
 			new Module("MansionFinder", "Finds the Mansion in the Crystal Hollows and shows it on a map in the corner of your screen.",
-					c -> c.hud, (c, on) -> {
-						c.hud = on;
-						c.save();
-					}),
+					c -> c.hud, saved((c, on) -> c.hud = on)),
 			new Module("Scanner", "Reports every player in your lobby, and everything players type in chat (yours too), to the "
 					+ "website. Always on, in every world.", null, null),
 			new Module("Auto Conversation", "Clicks the right option of a Hypixel NPC dialog for you, in the background, while you "
 					+ "keep playing normally.",
-					c -> c.npcAuto, (c, on) -> {
-						c.npcAuto = on;
-						c.save();
-					}),
+					c -> c.npcAuto, saved((c, on) -> c.npcAuto = on)),
 			new Module("Lobby Networth", "Who is in your lobby, with their networth, rank and how often you have met them, from the "
 					+ "website.",
-					c -> c.lobbyNetworth, (c, on) -> {
-						c.lobbyNetworth = on;
-						c.save();
-					}),
+					c -> c.lobbyNetworth, saved((c, on) -> c.lobbyNetworth = on)),
 			new Module("Frienemys", "Friend or enemy tags on players. A tagged player in your lobby shows up top-left, green or red.",
-					c -> c.frienemys, (c, on) -> {
-						c.frienemys = on;
-						c.save();
-					}),
+					c -> c.frienemys, saved((c, on) -> c.frienemys = on)),
 			new Module("Fullbright", "Forces maximum brightness, past what the options screen's gamma slider allows.",
-					c -> c.fullbright, (c, on) -> {
-						c.fullbright = on;
-						c.save();
-					}),
+					c -> c.fullbright, saved((c, on) -> c.fullbright = on)),
 			new Module("Auto Sprint", "Automatically makes you sprint.",
-					c -> c.keepsprint, (c, on) -> {
-						c.keepsprint = on;
-						c.save();
-					}),
+					c -> c.keepsprint, saved((c, on) -> c.keepsprint = on)),
 			new Module("Looped Clicker", "Shows click controls whenever a container is open. It keeps clicking one spot until you "
 					+ "stop it. Switching it on only shows the controls: it never starts on its own.",
 					c -> c.clicker, (c, on) -> {
@@ -101,70 +84,47 @@ public final class ClientMenuScreen extends Screen {
 					c -> c.noParticles, NoParticles::set),
 			new Module("HandMan", "Changes the size, position, rotation and swing speed of your hand and held item. Only what you "
 					+ "see changes.",
-					c -> c.handMan, (c, on) -> {
-						c.handMan = on;
-						c.save();
-					}),
+					c -> c.handMan, saved((c, on) -> c.handMan = on)),
 			new Module("Copy Chat", "Allows you to right click messages in chat to copy them.",
-					c -> c.copyChat, (c, on) -> {
-						c.copyChat = on;
-						c.save();
-					}),
+					c -> c.copyChat, saved((c, on) -> c.copyChat = on)),
 			new Module("Hide Players", "Hides players.",
-					c -> c.hidePlayers, (c, on) -> {
-						c.hidePlayers = on;
-						c.save();
-					}),
+					c -> c.hidePlayers, saved((c, on) -> c.hidePlayers = on)),
 			new Module("Chest ESP", "Renders chams or the bounding box for all chests.",
-					c -> c.chestEsp, (c, on) -> {
-						c.chestEsp = on;
-						c.save();
-					}),
+					c -> c.chestEsp, saved((c, on) -> c.chestEsp = on)),
 			new Module("Ghost Blocks", "Creates ghost blocks on key press, and in specific locations.",
-					c -> c.ghostBlocks, (c, on) -> {
-						c.ghostBlocks = on;
-						c.save();
-					}),
+					c -> c.ghostBlocks, saved((c, on) -> c.ghostBlocks = on)),
 			new Module("Key Highlight", "Draws a box around the key.",
-					c -> c.keyHighlight, (c, on) -> {
-						c.keyHighlight = on;
-						c.save();
-					}),
+					c -> c.keyHighlight, saved((c, on) -> c.keyHighlight = on)),
 			new Module("Teammate Highlight", "Enhances visibility of your dungeon teammates and their name tags.",
-					c -> c.teammatesHighlight, (c, on) -> {
-						c.teammatesHighlight = on;
-						c.save();
-					}),
+					c -> c.teammatesHighlight, saved((c, on) -> c.teammatesHighlight = on)),
 			new Module("Secret Hitboxes", "Full block Secret hitboxes.",
-					c -> c.secretHitboxes, (c, on) -> {
-						c.secretHitboxes = on;
-						c.save();
-					}),
+					c -> c.secretHitboxes, saved((c, on) -> c.secretHitboxes = on)),
 			new Module("Puzzle Solvers", "Dungeon puzzle solvers.",
-					c -> c.puzzleSolvers, (c, on) -> {
-						c.puzzleSolvers = on;
-						c.save();
-					}),
+					c -> c.puzzleSolvers, saved((c, on) -> c.puzzleSolvers = on)),
 			new Module("Camera", "Allows you to change qualities about third person view.",
-					c -> c.camera, (c, on) -> {
-						c.camera = on;
-						c.save();
-					}),
+					c -> c.camera, saved((c, on) -> c.camera = on)),
 			new Module("Server Display", "Displays your current ping and the server's TPS.",
-					c -> c.serverDisplay, (c, on) -> {
-						c.serverDisplay = on;
-						c.save();
-					}),
+					c -> c.serverDisplay, saved((c, on) -> c.serverDisplay = on)),
 			new Module("Chat Commands", "Type !help in the corresponding channel for cmd list. Use /blacklist.",
-					c -> c.chatCommands, (c, on) -> {
-						c.chatCommands = on;
-						c.save();
-					}),
+					c -> c.chatCommands, saved((c, on) -> c.chatCommands = on)),
 			new Module("No Debuff", "Disables certain debuffs.",
-					c -> c.noDebuff, (c, on) -> {
-						c.noDebuff = on;
-						c.save();
-					}));
+					c -> c.noDebuff, saved((c, on) -> c.noDebuff = on)),
+			new Module("Wiki Bar", "A bar under every inventory and chest. Type math to calculate it (50m/4, 3s, ans*2), or an item "
+					+ "to read its SkyBlock wiki page and plan its recipe. Ctrl+F or a click types in it; Ctrl+drag moves it.",
+					c -> c.wikiBar, saved((c, on) -> c.wikiBar = on)),
+			new Module("Pet Swapper", "Crystal Hollows: when your heat goes up it puts Bal on, when it goes down it puts back the pet "
+					+ "you had before. Swaps through /pets in the background: no menu shows and you keep moving.",
+					c -> c.petSwapper, saved((c, on) -> c.petSwapper = on)),
+			new Module("Starred Mobs", "Shows the starred (✯) mobs, the ones a room needs killed, through walls in dungeons.",
+					c -> c.starredMobs, saved((c, on) -> c.starredMobs = on)));
+
+	/** A module switch that sets one config field and saves the file. */
+	private static BiConsumer<FemboyClientConfig, Boolean> saved(BiConsumer<FemboyClientConfig, Boolean> set) {
+		return (c, on) -> {
+			set.accept(c, on);
+			c.save();
+		};
+	}
 
 	/** The module selected last time, so the menu reopens on it (also after Esc on one of the big screens). */
 	private static int selected = 0;
@@ -292,15 +252,15 @@ public final class ClientMenuScreen extends Screen {
 
 	// ------------------------------------------------------------ module list
 
+	/** The modules under each tab, as indexes into {@link #MODULES}, in list order. */
+	private static final List<List<Integer>> SHOWN = java.util.stream.IntStream.range(0, TABS.length)
+			.mapToObj(t -> java.util.stream.IntStream.range(0, MODULES.size()).filter(i -> t == 0 || DUNGEON_MODULES.contains(i))
+					.boxed().toList())
+			.toList();
+
 	/** The modules under the tab shown now, as indexes into {@link #MODULES}, in list order. */
 	private static List<Integer> shown() {
-		List<Integer> shown = new ArrayList<>();
-		for (int i = 0; i < MODULES.size(); i++) {
-			if (tab == 0 || DUNGEON_MODULES.contains(i)) {
-				shown.add(i);
-			}
-		}
-		return shown;
+		return SHOWN.get(tab);
 	}
 
 	/** The All / Dungeons tabs above the list. */
@@ -419,6 +379,8 @@ public final class ClientMenuScreen extends Screen {
 			case SERVER_DISPLAY -> serverDisplaySettings(config);
 			case CHAT_COMMANDS -> chatCommandsSettings(config);
 			case NO_DEBUFF -> noDebuffSettings(config);
+			case PET_SWAPPER -> petSwapperSettings(config);
+			case STARRED_MOBS -> starredMobsSettings(config);
 			default -> {
 			}
 		}
@@ -508,24 +470,16 @@ public final class ClientMenuScreen extends Screen {
 		slider("Roll", config.handRoll + "°", config.handRoll, HandMan.ROTATION, v -> config.handRoll = v);
 		section("Swing");
 		slider("Speed", HandMan.percent(config.handSpeed), config.handSpeed, HandMan.SPEED, v -> config.handSpeed = v);
-		handSwitch("Ignore Haste", "The speed above is used as it is, without Haste or Mining Fatigue changing it.",
+		configSwitch("Ignore Haste", "The speed above is used as it is, without Haste or Mining Fatigue changing it.",
 				config.handIgnoreHaste, (c, on) -> c.handIgnoreHaste = on);
-		handSwitch("Block Hit", "The 1.7 look: your item keeps swinging while you block.",
+		configSwitch("Block Hit", "The 1.7 look: your item keeps swinging while you block.",
 				config.handBlockHit, (c, on) -> c.handBlockHit = on);
-		handSwitch("No Equip Reset", "No dip down and back up when you switch items.",
+		configSwitch("No Equip Reset", "No dip down and back up when you switch items.",
 				config.handNoEquipReset, (c, on) -> c.handNoEquipReset = on);
-		handSwitch("No Swing", "Your item never swings forward.", config.handNoSwing, (c, on) -> c.handNoSwing = on);
-		handSwitch("No Block", "Blocking does not raise your item.", config.handNoBlock, (c, on) -> c.handNoBlock = on);
+		configSwitch("No Swing", "Your item never swings forward.", config.handNoSwing, (c, on) -> c.handNoSwing = on);
+		configSwitch("No Block", "Blocking does not raise your item.", config.handNoBlock, (c, on) -> c.handNoBlock = on);
 		buttons(new String[] {"Reset"}, new Runnable[] {() -> HandMan.reset(config)});
 		paragraph("Reset puts every setting above back to the game's own look.", Theme.TEXT_DIM);
-	}
-
-	private void handSwitch(String name, String hint, boolean on, BiConsumer<FemboyClientConfig, Boolean> set) {
-		switchRow(name, hint, on, () -> {
-			FemboyClientConfig config = FemboyClientConfig.get();
-			set.accept(config, !on);
-			config.save();
-		});
 	}
 
 	private void copyChatSettings(FemboyClientConfig config) {
@@ -703,6 +657,40 @@ public final class ClientMenuScreen extends Screen {
 		configSwitch("No Fire Overlay", "Disable Fire overlay on screen.", config.noDebuffFire, (c, on) -> c.noDebuffFire = on);
 		configSwitch("No Push", "Prevents from being pushed out of blocks.", config.noDebuffPush, (c, on) -> c.noDebuffPush = on);
 		configSwitch("See Through Blocks", "Makes blocks transparent.", config.noDebuffSeeThrough, (c, on) -> c.noDebuffSeeThrough = on);
+	}
+
+	private void starredMobsSettings(FemboyClientConfig config) {
+		section("Settings");
+		chips("Render Mode", new String[] {"Chams", "Outline"}, config.starredMobsMode, choice -> {
+			config.starredMobsMode = choice;
+			config.save();
+		});
+		int color = ChestEsp.colorIndex(config.starredMobsColor);
+		chips("Color", java.util.Arrays.copyOfRange(ChestEsp.COLOR_NAMES, 0, 4), color, choice -> {
+			config.starredMobsColor = ChestEsp.COLORS[choice];
+			config.save();
+		});
+		chips("", java.util.Arrays.copyOfRange(ChestEsp.COLOR_NAMES, 4, 8), color - 4, choice -> {
+			config.starredMobsColor = ChestEsp.COLORS[choice + 4];
+			config.save();
+		});
+		section("Now");
+		info("Starred mobs shown", Integer.toString(StarredMobs.count()));
+		paragraph("Chams: a see-through box over the mob. Outline: the game's glowing outline. Both show through walls.",
+				Theme.TEXT_DIM);
+	}
+
+	private void petSwapperSettings(FemboyClientConfig config) {
+		section("Now");
+		info("Heat", PetSwapper.heatText());
+		info("Pet out", PetSwapper.activeText());
+		info("Swaps back to", config.petSwapBack.isBlank() ? "not known yet" : config.petSwapBack);
+		info("Swaps this game", Integer.toString(PetSwapper.swaps()));
+		section("How it works");
+		paragraph("Heat up → Bal. Heat down → the pet you had out before Bal. Nothing happens when that pet is already out.",
+				Theme.TEXT);
+		paragraph("The pet to swap back to is the last pet other than Bal you had out. To change it, summon the other pet "
+				+ "yourself once.", Theme.TEXT_DIM);
 	}
 
 	private void keyHighlightSettings(FemboyClientConfig config) {
@@ -1061,7 +1049,7 @@ public final class ClientMenuScreen extends Screen {
 
 	// ------------------------------------------------------------ for the screenshot tests
 
-	/** The module selected now (index into the list: {@link #MANSION} to {@link #NO_DEBUFF}). */
+	/** The module selected now (index into the list: {@link #MANSION} to {@link #STARRED_MOBS}). */
 	public int selected() {
 		return selected;
 	}

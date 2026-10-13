@@ -24,6 +24,11 @@ final class Daemons {
 		return Executors.newSingleThreadScheduledExecutor(named(name));
 	}
 
+	/** {@code threads} daemon threads that share queued work, each called {@code femboyclient-<name>}. */
+	static ExecutorService pool(String name, int threads) {
+		return Executors.newFixedThreadPool(threads, named(name));
+	}
+
 	/** One daemon thread that runs queued work, called {@code femboyclient-<name>}. */
 	static ExecutorService worker(String name) {
 		return Executors.newSingleThreadExecutor(named(name));

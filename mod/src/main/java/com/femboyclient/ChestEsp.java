@@ -57,7 +57,7 @@ public final class ChestEsp {
 			return;
 		}
 		GizmoStyle style = config.chestEspMode == 0
-				? GizmoStyle.fill(withAlpha(config.chestEspColor, 0x66))
+				? GizmoStyle.fill(Colors.withAlpha(config.chestEspColor, 0x66))
 				: GizmoStyle.stroke(config.chestEspColor, 2F);
 		int radius = mc.options.getEffectiveRenderDistance();
 		int cx = mc.player.chunkPosition().x(), cz = mc.player.chunkPosition().z();
@@ -84,10 +84,6 @@ public final class ChestEsp {
 			return false;
 		}
 		return !config.chestEspOnlyHollows || "Crystal Hollows".equals(world);
-	}
-
-	private static int withAlpha(int argb, int alpha) {
-		return (alpha << 24) | (argb & 0xFFFFFF);
 	}
 
 	/** Which of {@link #COLORS} this is, or 0 (red) for any other colour. */

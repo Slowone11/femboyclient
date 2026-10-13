@@ -1,6 +1,7 @@
 package com.femboyclient.mixin;
 
 import com.femboyclient.CameraTweaks;
+import com.femboyclient.StarredMobs;
 import com.femboyclient.TeammatesHighlight;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
@@ -11,8 +12,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * {@link TeammatesHighlight}'s outline colour, and {@link CameraTweaks}' Freelook: while it is on, the mouse turns the camera
- * instead of your player. Both optional (require = 0).
+ * {@link TeammatesHighlight}'s and {@link StarredMobs}' outline colour, and {@link CameraTweaks}' Freelook: while it is on, the
+ * mouse turns the camera instead of your player. All optional (require = 0).
  */
 @Mixin(Entity.class)
 public abstract class EntityMixin {
@@ -20,6 +21,9 @@ public abstract class EntityMixin {
 	@Inject(method = "getTeamColor", at = @At("HEAD"), cancellable = true, require = 0)
 	private void femboyclient$teammateColor(CallbackInfoReturnable<Integer> cir) {
 		int color = TeammatesHighlight.outlineColor((Entity) (Object) this);
+		if (color == -1) {
+			color = StarredMobs.outlineColor((Entity) (Object) this);
+		}
 		if (color != -1) {
 			cir.setReturnValue(color);
 		}
