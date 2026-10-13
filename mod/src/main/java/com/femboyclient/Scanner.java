@@ -1,27 +1,17 @@
 package com.femboyclient;
 
 /**
- * The player scanner's on/off switch and world filter, set from the Scanner module in the G menu ({@link ClientMenuScreen}).
- * Reporting itself lives in {@link PlayerTracker}; this class only changes the setting and tells the website about it.
+ * The player scanner's status, shown on the website next to the account. The scanner has no switch: it always reports the
+ * players in your lobby and what players say, in every world, while the mod is enabled. Reporting itself lives in
+ * {@link PlayerTracker} and {@link PlayerChatCollector}.
  */
 final class Scanner {
 
 	private Scanner() {
 	}
 
-	/** Turns the scanner on or off, restricted to one SkyBlock world or every world, and tells the website. */
-	static void apply(FemboyClientConfig config, boolean on, String world) {
-		config.scanner = on;
-		config.scannerWorld = world;
-		config.save();
-		FemboyClientMod.SERVER.setScanner(describe(config));
-	}
-
-	/** "ON (world: Hub)", "ON (all worlds)" or "OFF". */
+	/** "ON (all worlds)", or "OFF" when the whole mod is switched off with enabled=false. */
 	static String describe(FemboyClientConfig config) {
-		if (!config.scanner) {
-			return "OFF";
-		}
-		return config.scannerWorld.isEmpty() ? "ON (all worlds)" : "ON (world: " + config.scannerWorld + ")";
+		return config.enabled ? "ON (all worlds)" : "OFF";
 	}
 }

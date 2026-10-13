@@ -241,7 +241,7 @@ async function selectPlayer(uuid) {
   document.dispatchEvent(new CustomEvent("account-selected", { detail: window.currentAccount() }));
 }
 
-// The account being shown, for the Lobby Networth tab.
+// The account being shown, for the Players tab.
 window.currentAccount = () => {
   const p = players.find(x => x.player_uuid === playerUuid);
   if (p) return { uuid: p.player_uuid, name: p.player_name, online: p.online, scanner: p.scanner || "", all: false };

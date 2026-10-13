@@ -15,21 +15,19 @@ import net.minecraft.util.FormattedCharSequence;
 import java.util.List;
 
 /**
- * "Frienemys": one of the modules the G menu ({@link ClientMenuScreen}) opens, with a small "◂ Menu" tab in the
- * corner to go back. Lists the players in your current lobby; pick one to tag them friendly or enemy and write a
+ * "Frienemys": opened from the Frienemys module of the G menu ({@link ClientMenuScreen}); Esc goes back there. Lists the players in your current lobby; pick one to tag them friendly or enemy and write a
  * note on why. The same tag can also be made or edited on the website, which is easier for a longer note.
  */
 public final class FrienemiesScreen extends Screen {
 
 	private static final int WIDTH = 460, HEIGHT = 300;
-	private static final int TAB_W = 110, TAB_H = 22;
 	private static final int LIST_WIDTH = 160;
 	private static final int CHIP_H = 22;
 	private static final int NOTE_H = 22;
 
 	private long openedAt;
 	private int winX0, winY0, winX1, winY1;
-	private int tabX0, tabY0, tabX1, tabY1;
+	private boolean fromMenu;
 	private int listX0, listY0, listX1, listY1;
 	private int detailX0, detailX1;
 	private int friendlyX0, friendlyX1, enemyX0, enemyX1, chipY0;
@@ -38,7 +36,7 @@ public final class FrienemiesScreen extends Screen {
 	private int untagX0, untagY0, untagX1, untagY1;
 
 	private FormattedCharSequence titleText, noPlayersText, pickText, notFoundText, hintText;
-	private UiFont.Label menuTabLabel, friendlyLabel, enemyLabel, saveLabel, untagLabel;
+	private UiFont.Label friendlyLabel, enemyLabel, saveLabel, untagLabel;
 
 	private PlayerRow list;
 	private LobbyPlayer selected;
@@ -51,6 +49,21 @@ public final class FrienemiesScreen extends Screen {
 	private String preparedStatusText;
 	private FormattedCharSequence statusSeq, noteText;
 	private String preparedNoteText;
+
+	/** Marks this screen as opened from the G menu, so Esc goes back there instead of to the game. */
+	public FrienemiesScreen fromMenu() {
+		fromMenu = true;
+		return this;
+	}
+
+	@Override
+	public void onClose() {
+		if (fromMenu) {
+			minecraft.setScreenAndShow(new ClientMenuScreen());
+		} else {
+			super.onClose();
+		}
+	}
 
 	public FrienemiesScreen() {
 		super(Component.literal("Frienemys"));
@@ -66,10 +79,6 @@ public final class FrienemiesScreen extends Screen {
 		winY0 = (height - HEIGHT) / 2;
 		winX1 = winX0 + WIDTH;
 		winY1 = winY0 + HEIGHT;
-		tabX1 = winX1 - 2;
-		tabX0 = tabX1 - TAB_W;
-		tabY0 = winY0 + 2;
-		tabY1 = tabY0 + TAB_H;
 
 		int left = winX0 + Theme.PADDING, right = winX1 - Theme.PADDING;
 		int bodyTop = winY0 + Theme.HEADER_HEIGHT + Theme.PADDING - 4;
@@ -100,7 +109,6 @@ public final class FrienemiesScreen extends Screen {
 		saveX0 = detailX0;
 
 		titleText = UiFont.sequence("Frienemys", UiFont.Face.VALUE);
-		menuTabLabel = UiFont.Label.of(font, "◂ Menu");
 		friendlyLabel = UiFont.Label.of(font, "Friendly");
 		enemyLabel = UiFont.Label.of(font, "Enemy");
 		saveLabel = UiFont.Label.of(font, "Save tag");
@@ -203,11 +211,6 @@ public final class FrienemiesScreen extends Screen {
 		int left = winX0 + Theme.PADDING;
 		UiDraw.glowDot(graphics, left + 5, winY0 + Theme.HEADER_HEIGHT / 2, 3, Theme.ACCENT);
 		UiDraw.text(graphics, font, titleText, left + 18, UiFont.centeredY(UiFont.Face.VALUE, winY0, Theme.HEADER_HEIGHT), Theme.TEXT);
-
-		boolean tabHover = UiDraw.inside(mouseX, mouseY, tabX0, tabY0, tabX1, tabY1);
-		UiDraw.hoverCard(graphics, tabX0, tabY0, tabX1, tabY1, Theme.ROW_RADIUS, tabHover);
-		UiDraw.label(graphics, font, menuTabLabel, tabX0 + 8, UiFont.topY(UiFont.Face.LABEL, tabY0 + 7),
-				tabHover ? Theme.ACCENT_LIGHT : Theme.TEXT_LABEL);
 
 		UiDraw.card(graphics, listX0, listY0, listX1, listY1, Theme.CARD_RADIUS, Theme.CARD_FILL, Theme.CARD_BORDER);
 		if (list.children().isEmpty()) {
@@ -324,10 +327,6 @@ public final class FrienemiesScreen extends Screen {
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
 		if (event.button() == 0) {
-			if (UiDraw.inside(event.x(), event.y(), tabX0, tabY0, tabX1, tabY1)) {
-				minecraft.setScreenAndShow(new ClientMenuScreen());
-				return true;
-			}
 			if (selected != null) {
 				boolean inNote = UiDraw.inside(event.x(), event.y(), noteX0, noteY0, noteX1, noteY1);
 				setNoteFocused(inNote);

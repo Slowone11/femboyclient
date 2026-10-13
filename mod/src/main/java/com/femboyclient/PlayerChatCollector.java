@@ -7,9 +7,7 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
@@ -17,20 +15,21 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Collects what other players say, and sends it to the website in small batches.
+ * Collects what players say, yours included, and sends it to the website in small batches. Part of the scanner.
  *
  * It only reads chat lines the game already received and sends nothing to the game
- * server. It runs while the player scanner is on (and only in the world the scanner is
- * set to), and it can be switched off with "playerChat=false" in the config file.
+ * server. It runs in every world, all the time, while the mod is enabled.
  *
  * A message is only kept when it provably came from a person:
  *   - public chat: the sender must be a real player in your tab list right now, so a
  *     server line that looks like "Name: text" is never taken for a person;
  *   - party, guild, co-op and private messages: the game's own channel prefix says so.
- * Your own messages are kept too. The website files them on your own node, not as a player. Private
+ * Your own messages are kept too, in every channel: a line whose sender is your own name is yours. You are not
+ * in your own tab-list name set, so public chat does not need you there. The website files them under your
+ * account, not as a player. Private
  * messages you send ("To Alice: ...") are kept under the player you wrote to.
- * Every message is sent with its type: PUBLIC, PARTY, GUILD, COOP, PRIVATE_FROM or PRIVATE_TO. The same message from the same
- * player and type arriving again within 2 seconds is dropped (Hypixel and other mods sometimes print a line twice).
+ * Every message is sent with its type: PUBLIC, PARTY, GUILD, COOP, PRIVATE_FROM or PRIVATE_TO. Every line is kept, a repeat
+ * too (even one Hypixel or another mod printed twice).
  *
  * Runs on the client thread. Messages wait up to FLUSH_AFTER, so a busy lobby is
  * sent as one request every couple of seconds instead of one per line.
@@ -45,36 +44,33 @@ public final class PlayerChatCollector {
 	/** Send at once when this many are waiting, and never hold more than this. */
 	static final int MAX_BATCH = 100;
 
-	/** The same message from the same player and type inside this time is a repeat. */
-	static final Duration DUPLICATE_WINDOW = Duration.ofSeconds(2);
-
-	/** When each recent message was kept, to spot repeats. Cleaned when it grows. */
-	private static final int RECENT_LIMIT = 256;
-
 	private record Pending(String player, String type, String text, Instant at) {
 	}
 
 	private final Consumer<JsonObject> sink;
 	private final BooleanSupplier allowed;
+	private final BooleanSupplier ownAllowed;
 	private final Supplier<String> me;
 	private final Supplier<Set<String>> lobbyNames;
 	private final Supplier<String> world;
 
 	private final List<Pending> pending = new ArrayList<>();
-	private final Map<String, Instant> recent = new HashMap<>();
 	private Instant oldest;
+	private volatile int collected;
 
 	/**
 	 * @param sink       where a finished message goes (the website link)
-	 * @param allowed    true while chat collection may run (scanner on, right world, not switched off)
+	 * @param allowed    true while other players' chat may be collected (the mod is enabled)
+	 * @param ownAllowed true while your own chat may be collected (the mod is enabled)
 	 * @param me         your own account name
 	 * @param lobbyNames the lower-case usernames of the real players in your tab list
 	 * @param world      the SkyBlock world you are in, or null if it is not known
 	 */
-	public PlayerChatCollector(Consumer<JsonObject> sink, BooleanSupplier allowed, Supplier<String> me,
-			Supplier<Set<String>> lobbyNames, Supplier<String> world) {
+	public PlayerChatCollector(Consumer<JsonObject> sink, BooleanSupplier allowed, BooleanSupplier ownAllowed,
+			Supplier<String> me, Supplier<Set<String>> lobbyNames, Supplier<String> world) {
 		this.sink = sink;
 		this.allowed = allowed;
+		this.ownAllowed = ownAllowed;
 		this.me = me;
 		this.lobbyNames = lobbyNames;
 		this.world = world;
@@ -83,7 +79,7 @@ public final class PlayerChatCollector {
 	/** Called with every chat message, without formatting codes. Never throws. */
 	public void onLine(String message) {
 		try {
-			if (message == null || !allowed.getAsBoolean()) {
+			if (message == null) {
 				return;
 			}
 			Instant now = Instant.now();
@@ -105,31 +101,31 @@ public final class PlayerChatCollector {
 		}
 
 		String sender = said.sender();
-		if (said.channel() == ChatLine.Channel.PUBLIC && !lobbyNames.get().contains(sender.toLowerCase(Locale.ROOT))) {
-			return;     // not someone in this lobby, so not a person talking
-		}
-
-		if (isRepeat(said.channel().type() + "|" + sender.toLowerCase(Locale.ROOT) + "|" + said.text(), now)) {
-			return;
+		String mine = me.get();
+		boolean yours = said.channel() == ChatLine.Channel.PRIVATE_TO || (mine != null && sender.equalsIgnoreCase(mine));
+		if (yours) {
+			if (!ownAllowed.getAsBoolean()) {
+				return;
+			}
+		} else {
+			if (!allowed.getAsBoolean()) {
+				return;
+			}
+			if (said.channel() == ChatLine.Channel.PUBLIC && !lobbyNames.get().contains(sender.toLowerCase(Locale.ROOT))) {
+				return;     // not someone in this lobby, so not a person talking
+			}
 		}
 
 		if (pending.isEmpty()) {
 			oldest = now;
 		}
 		pending.add(new Pending(sender, said.channel().type(), said.text(), now));
+		collected++;
 	}
 
-	/** True if this message was already kept less than {@link #DUPLICATE_WINDOW} ago. A message that is kept is remembered. */
-	private boolean isRepeat(String key, Instant now) {
-		Instant last = recent.get(key);
-		if (last != null && Duration.between(last, now).compareTo(DUPLICATE_WINDOW) < 0) {
-			return true;
-		}
-		recent.put(key, now);
-		if (recent.size() > RECENT_LIMIT) {
-			recent.values().removeIf(kept -> Duration.between(kept, now).compareTo(DUPLICATE_WINDOW) >= 0);
-		}
-		return false;
+	/** How many messages were collected since the game started, for the G menu. */
+	public int collected() {
+		return collected;
 	}
 
 	/** Called every client tick: sends the batch once the oldest message has waited long enough. */

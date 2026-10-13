@@ -9,7 +9,8 @@ Endpoints:
     GET  /players        every linked account with its live status
     POST /tracker/snapshot   players seen in a lobby (needs X-API-Key)
     GET  /tracker/search     find a player and every time you met them
-    GET  /tracker/tree       the graph data: you, your lobby visits, the players
+    GET  /tracker/overview   the worlds and how many players are in each familiarity tier
+    GET  /tracker/players    one page of the players in a tier (sightings under 4 hours apart are one meeting)
     GET  /tracker/live       server-sent events: players as they are seen
     GET  /tracker/worlds     the SkyBlock worlds seen so far, with player counts
     GET  /networth       is a third-party networth lookup available?
@@ -19,6 +20,7 @@ Run it with:  .venv\\Scripts\\python.exe -m uvicorn app:app
 """
 
 import asyncio
+import gzip
 import hashlib
 import hmac
 import ipaddress
@@ -63,8 +65,6 @@ ONLINE_WINDOW_MS = 45_000
 
 TRACKER_MAX_PLAYERS = 500     # names in one snapshot
 SEARCH_CHAT_LIMIT = 300       # messages shown per player
-TREE_DEFAULT_PLAYERS = 500    # players the tree returns unless asked for more
-TREE_MAX_PLAYERS = 5000       # well under SQLite's ~32766 bound-parameter limit, used as an IN(...) list per page
 SEARCH_DEFAULT_LIMIT = 20
 SEARCH_MAX_LIMIT = 100
 
@@ -91,6 +91,21 @@ def normalise_uuid(value: str) -> str:
         return str(uuidlib.UUID(value.strip()))
     except (ValueError, AttributeError):
         raise HTTPException(status_code=422, detail="invalid player_uuid: " + repr(value))
+
+
+def _json_response(request: Request, data) -> Response:
+    """A big answer as JSON, gzipped when the browser accepts that.
+
+    FastAPI's own conversion walks every value in Python first, which took longer than the queries for a big page
+    (5000 players). Plain json.dumps is the same JSON, made in C. Gzip turns a page of about 1.4 MB into a small fraction of
+    that, which matters when the page is opened from another PC or a phone.
+    """
+    body = json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    headers = {"Vary": "Accept-Encoding"}
+    if len(body) > 4096 and "gzip" in request.headers.get("accept-encoding", "").lower():
+        body = gzip.compress(body, compresslevel=5)
+        headers["Content-Encoding"] = "gzip"
+    return Response(content=body, media_type="application/json", headers=headers)
 
 
 # ------------------------------------------------------------------ config
@@ -1799,8 +1814,10 @@ def tracker_search(q: str = Query(min_length=1, max_length=32),
                    limit: int = Query(default=SEARCH_DEFAULT_LIMIT, ge=1, le=SEARCH_MAX_LIMIT)):
     """Find players by name, matching any part of it and ignoring case.
 
-    Each match comes with every time you met them, newest first, each with the
+    Each match comes with every time you met them (sightings), newest first, each with the
     SkyBlock world it was in, and by_world: how many times you met them in each world.
+    meetings counts the sightings that match, with sightings under 4 hours apart as one meeting,
+    and meeting_list (when sightings are asked for) groups them that way, newest first.
     Use sightings=false for a light list (for suggestions while typing) and
     exact=true to match the whole name only. Pass world (once or several times) to
     keep only players met in those worlds, and only those encounters. Pass owner and
@@ -1865,12 +1882,15 @@ def tracker_search(q: str = Query(min_length=1, max_length=32),
                     "SELECT s.seen_at, v.started_at, v.owner_uuid, v.world " + query +
                     " ORDER BY s.seen_at DESC, s.id DESC", args).fetchall()
                 item["matching"] = len(rows)   # encounters that pass the world filter
+                item["meetings"] = _count_meetings([r["seen_at"] for r in reversed(rows)])
             else:
                 # Suggestions only need the count: a COUNT(*) skips pulling every sighting row for a
                 # player who has been seen thousands of times, which is what made typing feel laggy
                 # once the tracker had a lot of players on file.
                 rows = None
-                item["matching"] = conn.execute("SELECT COUNT(*) " + query, args).fetchone()[0]
+                times = [r[0] for r in conn.execute("SELECT s.seen_at " + query + " ORDER BY s.seen_at, s.id", args)]
+                item["matching"] = len(times)
+                item["meetings"] = _count_meetings(times)
 
             # Have you ever been in a party with them, and how many times.
             party_sql = "FROM tracker_parties WHERE player_id = ?"
@@ -1913,6 +1933,10 @@ def tracker_search(q: str = Query(min_length=1, max_length=32),
                     {"seen_at": r["seen_at"], "visit_started_at": r["started_at"], "world": r["world"],
                      "account": accounts.get(r["owner_uuid"], "unknown")}
                     for r in rows]
+                item["meeting_list"] = _meetings_json(item["sightings"])
+                tag = conn.execute("SELECT tag, notes, updated_at FROM tracker_frienemies WHERE player_id = ?",
+                                   (p["id"],)).fetchone()
+                item["tag"] = dict(tag) if tag else None
             results.append(item)
 
     return {"query": q, "worlds": worlds, "players": results}
@@ -1950,138 +1974,234 @@ def tracker_worlds(owner: Optional[str] = None):
     return {"worlds": worlds, "total_players": total, "party_players": partied}
 
 
-@app.get("/tracker/tree")
-def tracker_tree(owner: str = ALL_ACCOUNTS,
-                 players: int = Query(default=TREE_DEFAULT_PLAYERS, ge=1, le=TREE_MAX_PLAYERS),
-                 before: Optional[int] = Query(default=None, ge=1),
-                 world: List[str] = Query(default=[])):
-    """The graph: you in the centre, a node for each SkyBlock world, the players around their worlds.
+# ------------------------------------------------------------------ meetings and familiarity tiers
+#
+# A sighting is one lobby visit in which a player was seen. Hopping lobbies makes many sightings a few minutes apart, so
+# they are folded into meetings: a meeting starts at a sighting, and every sighting less than MEET_WINDOW after that
+# start belongs to it. The next sighting at or after MEET_WINDOW starts a new meeting (a fixed window, not a rolling gap).
+# Nothing is deleted: the sightings stay as they are and the meetings are worked out from them when asked for.
 
-    Returns the `players` most recently met players. Pass before=<next_before> from the
-    last answer to get the next older batch. Pass world (once or several times) to get
-    only those worlds. A player met in several worlds appears once, linked to every one
-    of them, which is how you can see who has been in more than one world.
+MEET_WINDOW = timedelta(hours=4)
+
+# The familiarity tiers of the Players tab, by meetings. "close" (partied with you or tagged) is a separate group that
+# overlaps these.
+TIERS = ("once", "twice", "recurring", "regular")
+PLAYERS_DEFAULT_LIMIT = 50
+PLAYERS_MAX_LIMIT = 500
+
+
+def _tier(meetings: int) -> str:
+    """The tier for a number of meetings: 1 once, 2 twice, 3-4 recurring, 5+ regular."""
+    if meetings >= 5:
+        return "regular"
+    if meetings >= 3:
+        return "recurring"
+    return "twice" if meetings == 2 else "once"
+
+
+def _utc(text: str) -> datetime:
+    """A stored UTC time ("2026-09-21T19:41:03.123Z") as a datetime."""
+    return datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+
+def _meeting_groups(sightings: list) -> list:
+    """Sightings (dicts with seen_at), oldest first, as meetings: lists of sightings, oldest first."""
+    groups: list = []
+    start = None
+    for s in sightings:
+        when = _utc(s["seen_at"])
+        if start is None or when - start >= MEET_WINDOW:
+            groups.append([])
+            start = when
+        groups[-1].append(s)
+    return groups
+
+
+def _count_meetings(times: list) -> int:
+    """How many meetings a list of seen_at texts, oldest first, makes."""
+    count, start = 0, None
+    for text in times:
+        when = _utc(text)
+        if start is None or when - start >= MEET_WINDOW:
+            count += 1
+            start = when
+    return count
+
+
+def _meetings_json(sightings: list) -> list:
+    """A player's sightings (newest first, as /tracker/search lists them) as meetings, newest first. Each meeting has its
+    start and end, the worlds and accounts in it, and its sightings, newest first."""
+    out = []
+    for group in reversed(_meeting_groups(list(reversed(sightings)))):
+        worlds, owners = [], []
+        for s in group:
+            if s["world"] not in worlds:
+                worlds.append(s["world"])
+            if s["account"] not in owners:
+                owners.append(s["account"])
+        out.append({"start": group[0]["seen_at"], "end": group[-1]["seen_at"], "count": len(group),
+                    "worlds": worlds, "accounts": owners, "sightings": list(reversed(group))})
+    return out
+
+
+_familiar_cache: dict = {}
+_familiar_lock = threading.Lock()
+
+
+def _familiarity(conn, owner: Optional[str], world: Optional[str]) -> dict:
+    """Every player met by this account (or every account) in this world (or every world), with their meetings.
+
+    Returns player id -> {meetings, sightings, first, last, last_world, worlds: {world: meetings}}. Kept until a sighting
+    is added or removed, so paging through a list does not work it all out again.
     """
-    owner = _scope_owner(owner)          # None: every account of the profile together
-    worlds = _world_filter(world)
-    marks = ",".join("?" * len(worlds))
+    sql = (" FROM tracker_sightings s JOIN tracker_visits v ON v.id = s.visit_id WHERE 1 = 1" +
+           (" AND v.owner_uuid = ?" if owner else "") + (" AND lower(v.world) = ?" if world else ""))
+    params = ([owner] if owner else []) + ([world] if world else [])
+    stamp = tuple(conn.execute("SELECT COUNT(*), COALESCE(MAX(s.id), 0)" + sql, params).fetchone())
+    key = (str(DB_PATH), owner, world)
+    with _familiar_lock:
+        kept = _familiar_cache.get(key)
+        if kept and kept[0] == stamp:
+            return kept[1]
 
-    # Every sighting of this account (or of all accounts), optionally only in the chosen worlds.
-    scope = " FROM tracker_sightings s JOIN tracker_visits v ON v.id = s.visit_id WHERE 1 = 1"
-    scope_params: list = []
-    if owner:
-        scope += " AND v.owner_uuid = ?"
-        scope_params.append(owner)
-    if worlds:
-        scope += " AND lower(v.world) IN (" + marks + ")"
-        scope_params += worlds
+    players: dict = {}
+    starts: dict = {}           # (player id, world) -> the start of the meeting in that world, for the per-world count
+    for r in conn.execute("SELECT s.player_id, s.seen_at, v.world" + sql + " ORDER BY s.player_id, s.seen_at, s.id", params):
+        pid, seen, where = r[0], r[1], r[2]
+        when = _utc(seen)
+        p = players.get(pid)
+        if p is None:
+            p = players[pid] = {"meetings": 0, "sightings": 0, "first": seen, "last": seen, "last_world": where,
+                                "worlds": {}, "_start": None}
+        p["sightings"] += 1
+        p["last"], p["last_world"] = seen, where
+        if p["_start"] is None or when - p["_start"] >= MEET_WINDOW:
+            p["meetings"] += 1
+            p["_start"] = when
+        here = starts.get((pid, where))
+        if here is None or when - here >= MEET_WINDOW:
+            p["worlds"][where] = p["worlds"].get(where, 0) + 1
+            starts[(pid, where)] = when
+    for p in players.values():
+        del p["_start"]
 
+    with _familiar_lock:
+        if len(_familiar_cache) > 64:
+            _familiar_cache.clear()
+        _familiar_cache[key] = (stamp, players)
+    return players
+
+
+def _close_ids(conn, owner: Optional[str], met: dict, world: Optional[str]) -> set:
+    """Players partied with (by this account) or tagged friendly or enemy. With a world, only those met in it."""
+    clause, params = _party_scope(conn, owner)
+    close = {r[0] for r in conn.execute(
+        "SELECT DISTINCT t.player_id FROM tracker_parties t JOIN tracker_players p ON p.id = t.player_id WHERE " + clause,
+        params)}
+    close |= {r[0] for r in conn.execute("SELECT player_id FROM tracker_frienemies")}
+    if world:
+        close &= set(met)
+    return close
+
+
+def _one_world(world: Optional[str]) -> Optional[str]:
+    """One world name from a query, lower-case, or None for every world."""
+    if world is None:
+        return None
+    cleaned = _world_filter([world])
+    return cleaned[0] if cleaned else None
+
+
+@app.get("/tracker/overview")
+def tracker_overview(owner: Optional[str] = None, world: Optional[str] = Query(default=None, max_length=64)):
+    """What the Players tab opens on: the worlds (for the map) and how many players are in each familiarity tier.
+
+    The worlds and totals are those of /tracker/worlds, and latest_event_id is where /tracker/live continues from. tiers counts the players met in `world` (or in any world) by
+    meetings: once (1), twice (2), recurring (3-4) and regular (5 or more), plus close: partied with or tagged. A player
+    in close is also counted in their tier. Pass owner for one account; without it, or with owner=all, every account.
+    """
+    scope = _scope_owner(owner)
+    place = _one_world(world)
     with db() as conn:
-        # Read the live cursor first: a sighting that lands while the rest of this
-        # runs may then appear twice (the page ignores repeats) but is never missed.
+        # Read the live cursor first: a sighting that lands while the rest of this runs may then be counted twice by the
+        # page (it refreshes again) but is never missed.
         latest_event_id = conn.execute("SELECT COALESCE(MAX(id), 0) FROM tracker_sightings").fetchone()[0]
+    answer = tracker_worlds(owner)
+    answer["latest_event_id"] = latest_event_id
+    with db() as conn:
+        met = _familiarity(conn, scope, place)
+        close = _close_ids(conn, scope, met, place)
+    tiers = {t: 0 for t in TIERS}
+    for p in met.values():
+        tiers[_tier(p["meetings"])] += 1
+    tiers["close"] = len(close)
+    answer.update({"world": place, "players": len(met), "meetings": sum(p["meetings"] for p in met.values()),
+                   "tiers": tiers})
+    return answer
 
-        account = conn.execute("SELECT player_name FROM players WHERE player_uuid = ?", (owner,)).fetchone() if owner else None
 
-        # The players on this page, the most recently met first. "newest" is the id of
-        # their latest sighting, which is what the next page continues from.
-        sql = "SELECT s.player_id AS player_id, MAX(s.id) AS newest" + scope + " GROUP BY s.player_id"
-        page_params = list(scope_params)
-        if before is not None:
-            sql += " HAVING MAX(s.id) < ?"
-            page_params.append(before)
-        sql += " ORDER BY newest DESC LIMIT ?"
-        page_params.append(players + 1)
+@app.get("/tracker/players")
+def tracker_players(request: Request,
+                    owner: Optional[str] = None,
+                    world: Optional[str] = Query(default=None, max_length=64),
+                    tier: str = Query(default="all", pattern="^(all|once|twice|recurring|regular|close)$"),
+                    sort: str = Query(default="meetings", pattern="^(meetings|last|first|name)$"),
+                    offset: int = Query(default=0, ge=0),
+                    limit: int = Query(default=PLAYERS_DEFAULT_LIMIT, ge=1, le=PLAYERS_MAX_LIMIT)):
+    """One page of the players in a familiarity tier, for the Players tab's list.
 
-        found = conn.execute(sql, page_params).fetchall()
-        has_more = len(found) > players
-        found = found[:players]
+    Each player has their meetings and sightings in the chosen world (or every world), when you first and last met them
+    there, the world of the latest sighting, meetings per world, how many times they partied with you, and their
+    friendly/enemy tag. sort is meetings (most first), last (most recently met first), first (most recently first met
+    first) or name. total is how many players the whole tier has.
+    """
+    scope = _scope_owner(owner)
+    place = _one_world(world)
+    with db() as conn:
+        met = _familiarity(conn, scope, place)
+        if tier == "close":
+            ids = list(_close_ids(conn, scope, met, place))
+        elif tier == "all":
+            ids = list(met)
+        else:
+            ids = [pid for pid, p in met.items() if _tier(p["meetings"]) == tier]
 
-        pairs, people, in_view, totals, partied = [], [], {}, [], {}
+        empty = {"meetings": 0, "sightings": 0, "first": "", "last": "", "last_world": "", "worlds": {}}
+        if sort == "name":
+            names = {r[0]: r[1] for r in conn.execute("SELECT id, username_lower FROM tracker_players")}
+            ids.sort(key=lambda pid: (names.get(pid, ""), pid))
+        elif sort == "last":
+            ids.sort(key=lambda pid: (met.get(pid, empty)["last"], pid), reverse=True)
+        elif sort == "first":
+            ids.sort(key=lambda pid: (met.get(pid, empty)["first"], pid), reverse=True)
+        else:
+            ids.sort(key=lambda pid: (met.get(pid, empty)["meetings"], met.get(pid, empty)["last"], pid), reverse=True)
 
-        # Everyone this account has partied with goes on the first page, on their own
-        # "Parties" branch, unless a world filter is on (then only that world is shown).
-        party_ids: list = []
-        if before is None and not worlds:
-            party_clause, party_params = _party_scope(conn, owner)
-            party_ids = [r["player_id"] for r in conn.execute(
-                "SELECT DISTINCT t.player_id FROM tracker_parties t JOIN tracker_players p ON p.id = t.player_id"
-                " WHERE " + party_clause, party_params).fetchall()]
+        page = ids[offset:offset + limit]
+        rows, parties, tags = {}, {}, {}
+        if page:
+            marks = ",".join("?" * len(page))
+            rows = {r["id"]: r for r in conn.execute(
+                "SELECT id, username, first_seen, last_seen FROM tracker_players WHERE id IN (" + marks + ")", page)}
+            clause, params = _party_scope(conn, scope)
+            parties = {r[0]: r[1] for r in conn.execute(
+                "SELECT t.player_id, COUNT(*) FROM tracker_parties t JOIN tracker_players p ON p.id = t.player_id"
+                " WHERE " + clause + " AND t.player_id IN (" + marks + ") GROUP BY t.player_id", params + page)}
+            tags = {r[0]: {"tag": r[1], "notes": r[2]} for r in conn.execute(
+                "SELECT player_id, tag, notes FROM tracker_frienemies WHERE player_id IN (" + marks + ")", page)}
 
-        ids = [r["player_id"] for r in found]
-        ids += [pid for pid in party_ids if pid not in set(ids)]
-        if ids:
-            id_marks = ",".join("?" * len(ids))
-
-            # Which worlds each of them was met in, and how often.
-            pairs = conn.execute(
-                "SELECT s.player_id AS player_id, v.world AS world, COUNT(*) AS n" + scope +
-                " AND s.player_id IN (" + id_marks + ") GROUP BY s.player_id, v.world",
-                scope_params + ids).fetchall()
-
-            people = conn.execute(
-                "SELECT id, username, times_seen, first_seen, last_seen FROM tracker_players WHERE id IN (" + id_marks + ")",
-                ids).fetchall()
-
-            partied = {r["player_id"]: r["n"] for r in conn.execute(
-                "SELECT player_id, COUNT(*) AS n FROM tracker_parties WHERE player_id IN (" + id_marks + ")" +
-                (" AND owner_uuid = ?" if owner else "") + " GROUP BY player_id", ids + ([owner] if owner else [])).fetchall()}
-
-            if worlds:
-                # With a world filter on, "times met" means times met in those worlds.
-                in_view = {r["player_id"]: r["n"] for r in conn.execute(
-                    "SELECT s.player_id AS player_id, COUNT(*) AS n FROM tracker_sightings s"
-                    " JOIN tracker_visits v ON v.id = s.visit_id"
-                    " WHERE lower(v.world) IN (" + marks + ") AND s.player_id IN (" + id_marks + ")"
-                    " GROUP BY s.player_id", worlds + ids).fetchall()}
-
-            # How busy each world is overall, not just on this page.
-            world_names = sorted({r["world"] for r in pairs})
-            if world_names:
-                name_marks = ",".join("?" * len(world_names))
-                totals = conn.execute(
-                    "SELECT v.world AS world, COUNT(DISTINCT s.player_id) AS players, COUNT(DISTINCT v.id) AS visits" + scope +
-                    " AND v.world IN (" + name_marks + ") GROUP BY v.world",
-                    scope_params + world_names).fetchall()
-
-    label = "All accounts" if not owner else (account["player_name"] if account else "Me")
-    nodes = [{"id": "me", "type": "me", "label": label, "uuid": owner}]
-    links = []
-
-    for t in sorted(totals, key=lambda r: r["world"].lower()):
-        nodes.append({"id": "w:" + t["world"], "type": "world", "world": t["world"],
-                      "players": t["players"], "visits": t["visits"]})
-        links.append({"source": "me", "target": "w:" + t["world"]})
-
-    if party_ids:
-        nodes.append({"id": "party", "type": "party", "label": "Parties", "players": len(party_ids)})
-        links.append({"source": "me", "target": "party"})
-
-    met_in: dict = {}
-    for r in pairs:
-        met_in.setdefault(r["player_id"], {})[r["world"]] = r["n"]
-        links.append({"source": "w:" + r["world"], "target": "p%d" % r["player_id"], "times": r["n"]})
-
-    for pid in party_ids:
-        links.append({"source": "party", "target": "p%d" % pid, "times": partied.get(pid, 0)})
-
-    newest = {r["player_id"]: r["newest"] for r in found}
-    for p in sorted(people, key=lambda r: -newest.get(r["id"], 0)):
-        nodes.append({"id": "p%d" % p["id"], "type": "player", "label": p["username"],
-                      "times_seen": in_view.get(p["id"], p["times_seen"]) if worlds else p["times_seen"],
-                      "times_seen_total": p["times_seen"],
-                      "first_seen": p["first_seen"], "last_seen": p["last_seen"],
-                      "party_times": partied.get(p["id"], 0),
-                      "worlds": met_in.get(p["id"], {})})
-
-    return {
-        "nodes": nodes,
-        "links": links,
-        "worlds": worlds,
-        "has_more": has_more,
-        "next_before": found[-1]["newest"] if found else None,
-        "latest_event_id": latest_event_id,
-    }
+    players = []
+    for pid in page:
+        row = rows.get(pid)
+        if row is None:
+            continue
+        p = met.get(pid, empty)
+        players.append({"id": pid, "username": row["username"], "meetings": p["meetings"], "sightings": p["sightings"],
+                        "first_seen": p["first"] or row["first_seen"], "last_seen": p["last"] or row["last_seen"],
+                        "last_world": p["last_world"], "worlds": p["worlds"], "party_times": parties.get(pid, 0),
+                        "tag": tags.get(pid)})
+    return _json_response(request, {"world": place, "tier": tier, "sort": sort, "total": len(ids),
+                                    "offset": offset, "players": players})
 
 
 class TrackerClearIn(BaseModel):
@@ -2102,7 +2222,7 @@ def tracker_clear(body: TrackerClearIn, request: Request):
     """Delete an account's tracker data: every world, or just one.
 
     This cannot be undone, so it only works from the PC the website runs on. Anyone
-    else on the network (LAN mode) can read the graph but not wipe it. Players no one
+    else on the network (LAN mode) can read the data but not wipe it. Players no one
     has met any more are removed, and the counts of the rest are worked out again.
     """
     if not _is_local(request):
@@ -2267,7 +2387,7 @@ async def tracker_live(owner: str = ALL_ACCOUNTS, since: Optional[int] = Query(d
 
     Each event is one sighting, and says whether you had met that player before
     (returning) and when you last saw them (previous_seen_at). By default it starts
-    from now; pass ?since=<latest_event_id from /tracker/tree> to continue from there.
+    from now; pass ?since=<latest_event_id from /tracker/overview> to continue from there.
     """
     account = _scope_owner(owner)   # checked before streaming starts, so a bad value is a plain 422. None: every account
 

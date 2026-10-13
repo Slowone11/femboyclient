@@ -1,75 +1,59 @@
-// Femboy Client website: Lobby Networth tab. Needs graph.js (GraphKit) loaded before it.
+// Femboy Client website: Players tab.
 
 // ================================================================ tracker
 
 try {
-// Lobby Networth tab: a live graph of the SkyBlock worlds you have been in and the players you met.
+// Players tab: a map of the SkyBlock worlds you have been in, the players you met sorted into tiers by how
+// often you met them, a list of the chosen tier, and a panel for one player.
 //
-// The graph is you in the middle, one node per world, and the players around their world.
-// A player met in more than one world is joined to each of those worlds, so the same
-// name showing up around two worlds is easy to see.
+// A meeting is not a sighting: hopping lobbies sees the same player many times in a few minutes, so the website
+// folds every sighting less than 4 hours after a meeting starts into that meeting (see /tracker/players). The
+// sightings themselves are all kept and shown inside each meeting.
 //
-// It talks to /tracker/tree (history), /tracker/live (new players as they are seen),
-// /tracker/search and /tracker/worlds. Only usernames, times and SkyBlock world names
-// are shown. All times are displayed in America/Toronto; the server stores them in UTC.
+// It talks to /tracker/overview (the map and the tier counts), /tracker/players (the list), /tracker/search (a
+// player's panel and the suggestions), /tracker/live (new sightings, parties and chat as they happen),
+// /tracker/status and /tracker/discord. All times are displayed in America/Toronto; the server stores them in UTC.
 //
-// The world filter (chips above the graph) is one setting shared by the graph, the
-// search and the player profile, and it is remembered between visits.
-//
-// The stream and the alerts keep running while another tab is open, so an alert
-// can appear wherever you are on the page.
+// The stream and the alerts keep running while another tab is open, so an alert can appear wherever you are on
+// the page.
 (function () {
   "use strict";
 
   // ------------------------------------------------------------------ settings
 
   const TZ = "America/Toronto";
-  const PLAYERS_PER_PAGE = 5000;    // players asked for at a time (the server's own cap on /tracker/tree).
-  // A last-resort ceiling on auto-loading, so a runaway account cannot lock the tab up forever; ordinary
-  // tracker sizes never come close. Everyone loads automatically — see LAYOUT_THROTTLE_MS for how that stays
-  // smooth instead of laying the whole graph out again after every page.
-  const MAX_AUTO_PLAYERS = 200000;
-  // While pages are still arriving in the background, the expensive part (packing bubbles and redrawing the
-  // canvas) runs at most this often instead of once per page, so loading thousands of players in a few big
-  // pages does not re-pack and redraw everyone loaded so far, again, after every page. The first page and the
-  // final page always draw immediately.
-  const LAYOUT_THROTTLE_MS = 350;
-  const BUBBLE_GAP = 5;             // clear space between two bubbles
-  const BUBBLE_CELL = 60;           // the packing looks for neighbours in squares this big
-  const ROOM_STEP = 100;             // a world's room grows in steps of this, so the layout is not redone for every player
-  const ROOM_PAD = 30;              // spare room round every world
-  const ME_CLEAR = 170;             // the smallest gap between you and the edge of a world's room
-  const FLASH_MS = 5000;            // how long a new player stays highlighted
-  const BATCH_MS = 60;              // live events arriving together are drawn together
+  const PAGE = 50;                  // players asked for at a time for the list
+  const PREVIEW = 3;                // names shown on each tier card
+  const REFRESH_MS = 2500;          // after live events, the map, tiers and list are refreshed at most this often
   const ALERT_BATCH_MS = 1200;      // returning players arriving together become one alert
   const TOASTS_EACH = 3;            // up to this many are named individually, more are summarised
   const MAX_TOASTS = 5;
   const LOG_LIMIT = 100;
-  const WORLD_REFRESH_MS = 500;     // after live events, the world counts and the total are refreshed
   const KEY_ALERTS = "femboyclient.tracker.alerts";
   const KEY_LOG = "femboyclient.tracker.alertLog";
-  const KEY_WORLDS = "femboyclient.tracker.worlds";
-  const KEY_PARTY = "femboyclient.tracker.partyGlow";
-  const PARTY_BLUE = "#38a0ff";      // the glow round players you have partied with
+  const KEY_WORLD = "femboyclient.tracker.world";
+  const KEY_TIER = "femboyclient.tracker.tier";
+  const KEY_SORT = "femboyclient.tracker.sort";
 
-  const COLORS = {
-    me:       { background: "#ff4fa6", border: "#b8306e" },
-    flashNew: { background: "#46c46a", border: "#2c8f4b" },
-    flashOld: { background: "#ff9f43", border: "#c26a14" }
-  };
-  const MULTI_PINK = "#ff6f91";      // the ring round a player met in more than one world
-  const MEET_HUE = 45;               // players get brighter and more golden the more you have met them
-  const MEET_FULL = 16;              // this many meetings (or more) is the brightest
+  // The tier cards, in order. "close" overlaps the others.
+  const TIERS = [
+    { id: "once",      label: "Strangers",         hint: "met once" },
+    { id: "twice",     label: "Seen twice",        hint: "2 meetings" },
+    { id: "recurring", label: "Recurring",         hint: "3–4 meetings" },
+    { id: "regular",   label: "Regulars",          hint: "5+ meetings" },
+    { id: "close",     label: "Partied or tagged", hint: "any meetings" }
+  ];
+
+  const $ = (id) => document.getElementById(id);
 
   // Every world gets its own colour, picked to look as different from the others as possible.
   // The colours below were chosen by measuring how different they look to the eye (CIE Lab),
-  // so the first ten stay clearly apart. Blue is left for Parties, and yellow for you.
-  // A world that is not listed takes the next spare colour, and once those run out the
-  // colour that is furthest from all the others. It keeps its colour (remembered in the browser).
+  // so the first ten stay clearly apart. A world that is not listed takes the next spare colour, and
+  // once those run out the colour that is furthest from all the others. It keeps its colour (remembered in the browser).
   const FIXED_WORLD_COLORS = {
     "Hub": "#16f316", "The End": "#f316f3", "Dungeons": "#f31659", "Crystal Hollows": "#16f3c7",
     "Dwarven Mines": "#f35916", "Private Island": "#f17ece", "Dungeon Hub": "#c3f17e",
-    "Unknown": "#7a8599", "Parties": PARTY_BLUE
+    "Unknown": "#7a8599"
   };
   const SPARE_COLORS = ["#f1957e", "#1643f3", "#f3f316", "#7ee5f1", "#a17ef1", "#16f385", "#f1ce7e", "#f04c8e"];
   const KEY_WORLD_COLORS = "femboyclient.tracker.worldColors2";
@@ -120,25 +104,12 @@ try {
     if (FIXED_WORLD_COLORS[name]) return FIXED_WORLD_COLORS[name];
     if (assignedColors[name]) return assignedColors[name];
 
-    const used = Object.values(FIXED_WORLD_COLORS).concat(Object.values(assignedColors), COLORS.me.background);
+    const used = Object.values(FIXED_WORLD_COLORS).concat(Object.values(assignedColors), "#ff4fa6");
     const color = SPARE_COLORS.find(c => !used.includes(c)) || generatedColor(used);
     assignedColors[name] = color;
     store(KEY_WORLD_COLORS, JSON.stringify(assignedColors));
     return color;
   }
-
-  // The colour of a player: dim when you have met them once, brighter and more golden every time after.
-  // A player met in several worlds gets a pink ring; one you have partied with gets a blue ring and glow.
-  function meetColor(times) {
-    const t = Math.min(1, Math.log2(Math.max(1, times)) / Math.log2(MEET_FULL));   // 1, 2, 4, 8, 16 meetings
-    const sat = Math.round(12 + 88 * t), light = Math.round(30 + 46 * t);
-    return {
-      fill: "hsl(" + MEET_HUE + ", " + sat + "%, " + light + "%)",
-      edge: "hsl(" + MEET_HUE + ", " + sat + "%, " + Math.max(12, light - 16) + "%)"
-    };
-  }
-
-  const $ = (id) => document.getElementById(id);
 
   // ------------------------------------------------------------------- helpers
 
@@ -151,6 +122,39 @@ try {
     return when.toLocaleString("en-US", opts);
   }
 
+  // "3:41 PM" in Toronto time.
+  function fmtTime(iso) {
+    return new Date(iso).toLocaleString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
+  }
+
+  // "just now", "12m ago", "5h ago", "6d ago", then the date for anything older than a month.
+  function ago(iso) {
+    if (!iso) return "";
+    const seconds = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (seconds < 60) return "just now";
+    if (seconds < 3600) return Math.floor(seconds / 60) + "m ago";
+    if (seconds < 86400) return Math.floor(seconds / 3600) + "h ago";
+    if (seconds < 86400 * 31) return Math.floor(seconds / 86400) + "d ago";
+    return fmtShort(iso).replace(/,? \d+:\d+ [AP]M$/, "");
+  }
+
+  // A relative time with the full time on hover.
+  function agoHtml(iso) {
+    return iso ? '<span title="' + esc(fmtFull(iso)) + '">' + esc(ago(iso)) + "</span>" : "–";
+  }
+
+  // "16 min", "3 h 12 min"
+  function duration(fromIso, toIso) {
+    const minutes = Math.round((new Date(toIso) - new Date(fromIso)) / 60000);
+    if (minutes < 1) return "";
+    if (minutes < 60) return minutes + " min";
+    return Math.floor(minutes / 60) + " h" + (minutes % 60 ? " " + (minutes % 60) + " min" : "");
+  }
+
+  const num = (n) => Number(n || 0).toLocaleString("en-US");
+  const plural = (n, one, many) => num(n) + " " + (n === 1 ? one : (many || one + "s"));
+  const dot = (world) => '<i class="tk-dot" style="background:' + esc(worldColor(world)) + '"></i>';
+
   async function getJson(url) {
     const res = await fetch(url);
     if (!res.ok) throw new Error(url + " -> HTTP " + res.status);
@@ -162,125 +166,51 @@ try {
 
   // --------------------------------------------------------------------- state
 
-  const nodes = new GraphKit.DataSet();
-  const edges = new GraphKit.DataSet();
-  let network = null;
+  let owner = null;                 // the account being shown, or "all"
+  let ownerState = "";              // "loading" or "loaded" once the tab is for owner
+  let ownerLabel = "";              // its name, or "All accounts"
+  let world = load(KEY_WORLD) || ""; // the world chosen on the map, "" for every world (as the server spells it)
+  let tier = load(KEY_TIER) || "regular";
+  let sort = load(KEY_SORT) || "meetings";
+  if (!TIERS.some(t => t.id === tier) && tier !== "all") tier = "regular";
 
-  let owner = null;                 // the account being shown
-  let hasMore = false;
-  let nextBefore = null;            // where "Load more players" continues from
-  let loadTicket = 0, detailTicket = 0, suggestTicket = 0;
-  let fitted = false;
-
-  // The world filter. Empty means every world. Names are as the server spells them.
-  let filterWorlds = [];
-  try { filterWorlds = JSON.parse(load(KEY_WORLDS) || "[]").filter(w => typeof w === "string"); } catch (e) { filterWorlds = []; }
-  let worldsList = [];              // [{ world, players, visits }] from /tracker/worlds
-  let totalPlayers = 0;             // different players met in any world, from /tracker/worlds
-  let lastTotal = null;             // the total before the latest refresh (null until the first one arrives)
-  let partyPlayers = 0;             // different players you have partied with, from /tracker/worlds
-  let partyGlow = load(KEY_PARTY) !== "off";   // glow blue round players you have partied with
+  let overview = null;              // the last /tracker/overview answer
+  let previews = {};                // tier id -> the first few players, for the cards
+  let rows = [], rowsTotal = 0;     // the list
+  let lastTotal = null;             // "Players met" before the latest refresh (null until the first one arrives)
   let plusAmount = 0, plusTimer = null;
-  let worldTimer = null;
-  let profileName = null;           // the player whose profile is open
-  let profile = null;               // what was loaded for them: { p, filtered }
-  let playerTab = "details";        // "details" or "chat". Kept as you move from player to player.
-  let statusView = null;            // the Hypixel status card: { name, data, error, loading, receivedAt }
-  let meTab = "summary";            // the middle node's panel: "summary" or "chat" (what you said)
+  let loadTicket = 0, listTicket = 0, detailTicket = 0, suggestTicket = 0;
+  let refreshTimer = null, refreshDue = 0;
+
+  let profileName = null;           // the player whose panel is open
+  let profile = null;               // what was loaded for them (one /tracker/search player)
+  let playerTab = "meetings";       // "meetings", "chat" or "parties". Kept as you move from player to player.
+  let statusView = null;            // the Hypixel status line: { name, data, failure, loading, receivedAt }
+  let meTab = "summary";            // the account panel: "summary" or "chat" (what you said)
   let myChat = null;                // { count, chats } for the account shown, or null until loaded
+  let tagBusy = false, tagError = "";
   const DISCORD_TTL_MS = 3600000;   // matches the website's cache: a Discord name is asked for once an hour
   const discordKept = new Map();    // lower-case name -> { data, receivedAt }
   let discordView = null;           // { name, data, loading, failure } for the player whose panel is open
   const statusKept = new Map();     // lower-case name -> { data, receivedAt }, so a second click within 45 s asks nothing
   const STATUS_TTL_MS = 45000;      // matches the website's cache
-  const REFRESH_COOLDOWN_MS = 10000;// the Refresh button waits this long after a lookup
-  let panelIsMe = true;             // the side panel shows your summary (so it is kept up to date)
-
-  // The layout. Every world (and the Parties branch) is a "branch". A player sits round the
-  // branch they were first met in, their "home"; their links to other worlds are drawn faint.
-  const branchOrder = [];           // branch ids in the order they appeared, so nothing swaps places
-  const members = new Map();        // branch id -> the player node ids whose home it is, in order
-  const home = new Map();           // player node id -> the branch id it sits round
-  const spots = new Map();          // node id -> { x, y }, where the layout last put it
-  const worldPlayers = new Map();   // world node id -> Set of player node ids
-  const playerWorlds = new Map();   // player node id -> Set of world node ids
-
-  let layoutTimer = null;           // the pending throttled layout, if one is waiting to run
+  const REFRESH_COOLDOWN_MS = 10000;// the status refresh waits this long after a lookup
 
   let stream = null, reconnectTimer = null, lastEventId = 0;
-  let pendingEvents = [], batchTimer = null;
-  const flashTimers = new Map();
 
   let alertQueue = [], alertTimer = null;
   let alertLog = [];
   try { alertLog = JSON.parse(load(KEY_LOG) || "[]"); } catch (e) { alertLog = []; }
 
-  // ------------------------------------------------------------- the world filter
+  const ownerParam = () => owner ? "&owner=" + encodeURIComponent(owner) : "";
+  const worldParam = () => world ? "&world=" + encodeURIComponent(world) : "";
 
-  function inFilter(world) {
-    return filterWorlds.length === 0 || filterWorlds.some(w => w.toLowerCase() === String(world).toLowerCase());
-  }
-
-  function worldParams() {
-    return filterWorlds.map(w => "&world=" + encodeURIComponent(w)).join("");
-  }
-
-  function saveFilter() { store(KEY_WORLDS, JSON.stringify(filterWorlds)); }
-
-  // Party information is per account, so searches say which account they are for.
-  function ownerParam() { return owner ? "&owner=" + encodeURIComponent(owner) : ""; }
-
-  // Adds or removes a world from the filter. Empty name means "All worlds".
-  function toggleWorld(name) {
-    if (!name) {
-      filterWorlds = [];
-    } else if (inFilter(name) && filterWorlds.length) {
-      filterWorlds = filterWorlds.filter(w => w.toLowerCase() !== name.toLowerCase());
-    } else {
-      filterWorlds = filterWorlds.concat(name);
-    }
-    saveFilter();
-    onFilterChanged();
-  }
-
-  async function onFilterChanged() {
-    renderWorldBar();
-    await reloadGraph();
-    if (profileName) showPlayer(profileName);      // the profile follows the same filter
-    else showMe();
-  }
-
-  function renderWorldBar() {
-    const known = worldsList.map(w => w.world);
-    const extra = filterWorlds.filter(w => !known.some(k => k.toLowerCase() === w.toLowerCase()));   // chosen but not seen for this account
-    const chips = worldsList.concat(extra.map(w => ({ world: w, players: 0 })));
-
-    $("tkWorlds").innerHTML =
-      '<button class="tk-wchip' + (filterWorlds.length === 0 ? " on" : "") + '" data-world="">All worlds</button>' +
-      chips.map(w =>
-        '<button class="tk-wchip' + (filterWorlds.length && inFilter(w.world) ? " on" : "") + '" data-world="' + esc(w.world) + '">' +
-        '<i style="background:' + esc(worldColor(w.world)) + '"></i>' + esc(w.world) +
-        " <small>" + w.players + "</small></button>").join("") +
-      '<span class="tk-wsep"></span>' +
-      '<button class="tk-wchip tk-partychip' + (partyGlow ? " on" : "") + '" data-party="1" ' +
-        'title="Glow blue round every player you have been in a party with, in any world">' +
-        '<i class="glow"></i>Partied with <small>' + partyPlayers + "</small></button>";
-  }
-
-  // Turns the blue glow on or off for everyone drawn.
-  function toggleParty() {
-    partyGlow = !partyGlow;
-    store(KEY_PARTY, partyGlow ? "on" : "off");
-    renderWorldBar();
-    nodes.update(nodes.get({ filter: n => n.type === "player" })
-      .map(n => Object.assign({ id: n.id }, playerStyle(n.times, n.worlds, n.party))));
-    renderLegend();
-  }
+  // ------------------------------------------------------------ the counter
 
   // The "Players met" counter. It flashes when the number goes up.
-  function renderTotal() {
+  function renderTotal(total) {
     const box = $("tkTotal");
-    const shown = totalPlayers.toLocaleString("en-US");
+    const shown = num(total);
     if (box.textContent === shown) return;
     const grew = box.textContent !== "0" && box.textContent !== "";
     box.textContent = shown;
@@ -304,32 +234,215 @@ try {
     plusTimer = setTimeout(() => { plusTimer = null; box.classList.remove("go"); }, 2400);
   }
 
-  async function refreshWorlds() {
-    if (!owner) return;
-    const asking = owner;
-    try {
-      const data = await getJson("/tracker/worlds?owner=" + encodeURIComponent(asking));
-      if (asking !== owner) return;
-      worldsList = data.worlds;
-      totalPlayers = data.total_players;
-      partyPlayers = data.party_players || 0;
-      // The first answer for an account is just the starting total. Later increases are new players.
-      if (lastTotal !== null && totalPlayers > lastTotal) showPlus(totalPlayers - lastTotal);
-      lastTotal = totalPlayers;
-      renderTotal();
-      renderWorldBar();
-    } catch (e) { /* keep the last list */ }
+  // ---------------------------------------------------------------- the map
+
+  // Lays out boxes with areas in proportion to their values, as square as it can (the "squarified" treemap).
+  function squarify(items, x, y, w, h) {
+    const out = [];
+    const total = items.reduce((s, i) => s + i.value, 0);
+    if (!total) return out;
+    const scale = (w * h) / total;
+    let rest = items.map(i => Object.assign({}, i, { area: i.value * scale }));
+
+    const worst = (row, side) => {
+      const sum = row.reduce((s, r) => s + r.area, 0);
+      let max = 0, min = Infinity;
+      for (const r of row) { max = Math.max(max, r.area); min = Math.min(min, r.area); }
+      return Math.max((side * side * max) / (sum * sum), (sum * sum) / (side * side * min));
+    };
+
+    while (rest.length) {
+      const side = Math.min(w, h);
+      const row = [rest[0]];
+      let i = 1;
+      while (i < rest.length && worst(row.concat(rest[i]), side) <= worst(row, side)) row.push(rest[i++]);
+      rest = rest.slice(i);
+
+      const sum = row.reduce((s, r) => s + r.area, 0);
+      if (w >= h) {                     // a column on the left
+        const cw = sum / h;
+        let cy = y;
+        for (const r of row) { const rh = r.area / cw; out.push(Object.assign(r, { x, y: cy, w: cw, h: rh })); cy += rh; }
+        x += cw; w -= cw;
+      } else {                          // a row along the top
+        const rh = sum / w;
+        let cx = x;
+        for (const r of row) { const rw = r.area / rh; out.push(Object.assign(r, { x: cx, y, w: rw, h: rh })); cx += rw; }
+        y += rh; h -= rh;
+      }
+    }
+    return out;
   }
 
-  function renderLegend() {
-    const seen = nodes.get({ filter: n => n.type === "world" }).map(n => n.world);
-    $("tkLegend").innerHTML =
-      '<span><i style="background:' + COLORS.me.background + '"></i>You</span>' +
-      seen.map(w => '<span><i style="background:' + esc(worldColor(w)) + '"></i>' + esc(w) + "</span>").join("") +
-      (nodes.get("party") ? '<span><i style="background:' + PARTY_BLUE + '"></i>Parties</span>' : "") +
-      '<span><i class="gradbar"></i>Met once → many times</span>' +
-      '<span><i class="ring"></i>In more than one world</span>' +
-      (partyGlow ? '<span><i class="glow"></i>Partied with you</span>' : "");
+  function renderMap() {
+    const box = $("tkMap");
+    const worlds = overview ? overview.worlds.filter(w => w.players > 0) : [];
+    if (!worlds.length) {
+      box.innerHTML = '<div class="tk-mapempty">' + (overview ? "No players met yet. The mod reports them as soon as you join a lobby." : "Loading…") + "</div>";
+      return;
+    }
+    const width = box.clientWidth || 800, height = box.clientHeight || 170;
+    // A square root keeps a world with 15 players visible next to one with 10,000, while the big ones stay biggest.
+    const tiles = squarify(worlds.map(w => ({ item: w, value: Math.sqrt(w.players) })), 0, 0, width, height);
+    const chosen = world.toLowerCase();
+    box.innerHTML = tiles.map(t => {
+      const w = t.item, color = worldColor(w.world);
+      const small = t.w < 70 || t.h < 34, tiny = t.w < 34 || t.h < 20;
+      const on = chosen && w.world.toLowerCase() === chosen;
+      return '<button class="tk-tile' + (on ? " on" : "") + (chosen && !on ? " dim" : "") + (small ? " small" : "") + '"' +
+        ' data-world="' + esc(w.world) + '" title="' + esc(w.world + ": " + num(w.players) + " players, " + num(w.visits) + " lobby visits") + '"' +
+        ' style="left:' + t.x.toFixed(1) + "px;top:" + t.y.toFixed(1) + "px;width:" + t.w.toFixed(1) + "px;height:" + t.h.toFixed(1) + "px;" +
+        "--c:" + esc(color) + '">' +
+        (tiny ? "" : '<span class="tk-tname">' + esc(w.world) + '</span><span class="tk-tnum">' + num(w.players) + "</span>") +
+        "</button>";
+    }).join("");
+  }
+
+  function renderScope() {
+    const listed = overview && world ? overview.worlds.find(w => w.world.toLowerCase() === world.toLowerCase()) : null;
+    const name = world ? (listed ? listed.world : world) : "All worlds";
+    $("tkScope").innerHTML =
+      (world ? dot(name) : "") + "<b>" + esc(name) + "</b>" +
+      (overview ? '<span class="tk-dim"> · ' + plural(overview.players, "player") + " · " + plural(overview.meetings, "meeting") + "</span>" : "") +
+      (world ? ' <button class="tk-link" data-world="">Show all worlds</button>' : '<span class="tk-dim"> · click a world to look inside it</span>');
+  }
+
+  // ---------------------------------------------------------------- the tiers
+
+  function renderTiers() {
+    const counts = overview ? overview.tiers : {};
+    $("tkTiers").innerHTML = TIERS.map(t => {
+      const n = counts[t.id] || 0;
+      const shown = previews[t.id] || [];
+      const names = t.id === "once"
+        ? '<div class="tk-tnames tk-dim">One-off meetings. Open to list them.</div>'
+        : '<div class="tk-tnames">' + (shown.length
+            ? shown.map(p => '<span><b>' + esc(p.username) + "</b>" +
+                (t.id === "close" ? closeMark(p) : '<em>×' + p.meetings + "</em>") + "</span>").join("")
+            : '<span class="tk-dim">' + (overview ? "Nobody yet" : "") + "</span>") + "</div>";
+      return '<button class="tk-tier t-' + t.id + (tier === t.id ? " on" : "") + '" data-tier="' + t.id + '">' +
+        '<span class="tk-tlabel">' + esc(t.label) + ' <small>' + esc(t.hint) + "</small></span>" +
+        '<span class="tk-tcount">' + num(n) + "</span>" + names + "</button>";
+    }).join("");
+  }
+
+  // What makes a player "close": the tag, or how often they partied with you.
+  function closeMark(p) {
+    if (p.tag) return '<em class="tag-' + esc(p.tag.tag) + '">' + esc(p.tag.tag) + "</em>";
+    return p.party_times ? '<em class="party">party ×' + p.party_times + "</em>" : "";
+  }
+
+  async function loadPreviews(ticket) {
+    const wanted = TIERS.filter(t => t.id !== "once");
+    const answers = await Promise.all(wanted.map(t =>
+      getJson("/tracker/players?tier=" + t.id + "&sort=" + (t.id === "close" ? "last" : "meetings") + "&limit=" + PREVIEW + ownerParam() + worldParam())
+        .catch(() => null)));
+    if (ticket !== loadTicket) return;
+    wanted.forEach((t, i) => { if (answers[i]) previews[t.id] = answers[i].players; });
+    renderTiers();
+  }
+
+  // ---------------------------------------------------------------- the list
+
+  function listTitle() {
+    const t = TIERS.find(x => x.id === tier);
+    return (t ? t.label : "Everyone") + (world ? " in " + world : "");
+  }
+
+  async function loadList(append) {
+    const ticket = ++listTicket;
+    const offset = append ? rows.length : 0;
+    const limit = append ? PAGE : Math.max(PAGE, rows.length);    // a refresh keeps what was already shown
+    let page;
+    try {
+      page = await getJson("/tracker/players?tier=" + tier + "&sort=" + sort + "&offset=" + offset + "&limit=" + Math.min(limit, 500) + ownerParam() + worldParam());
+    } catch (e) {
+      if (ticket === listTicket) $("tkListNote").textContent = "Could not load the list.";
+      return;
+    }
+    if (ticket !== listTicket) return;
+    rows = append ? rows.concat(page.players) : page.players;
+    rowsTotal = page.total;
+    renderList();
+  }
+
+  function renderList() {
+    $("tkListTitle").textContent = listTitle();
+    $("tkListCount").textContent = rowsTotal ? num(rowsTotal) : "";
+    $("tkSort").value = sort;
+    const open = profileName ? profileName.toLowerCase() : "";
+    $("tkRows").innerHTML = rows.length
+      ? rows.map(p => {
+          const worlds = Object.entries(p.worlds || {}).sort((a, b) => b[1] - a[1]);
+          return '<button class="tk-row' + (p.username.toLowerCase() === open ? " on" : "") + '" data-player="' + esc(p.username) + '">' +
+            '<span class="tk-rname">' + (p.tag ? '<i class="tk-tagdot ' + esc(p.tag.tag) + '" title="' + esc(p.tag.tag + (p.tag.notes ? ": " + p.tag.notes : "")) + '"></i>' : "") +
+              esc(p.username) + "</span>" +
+            '<span class="tk-rmeet" title="' + esc(plural(p.sightings, "sighting")) + '">' + (p.meetings ? "×" + p.meetings : "–") + "</span>" +
+            '<span class="tk-rworlds" title="' + esc(worlds.map(([w, n]) => w + " ×" + n).join(", ")) + '">' + worlds.slice(0, 6).map(([w]) => dot(w)).join("") + "</span>" +
+            '<span class="tk-rparty">' + (p.party_times ? "party ×" + p.party_times : "") + "</span>" +
+            '<span class="tk-rlast">' + (p.meetings ? agoHtml(p.last_seen) : "never met") + "</span>" +
+            "</button>";
+        }).join("")
+      : '<div class="empty">' + (overview ? "Nobody in this group" + (world ? " in " + esc(world) : "") + "." : "Loading…") + "</div>";
+    $("tkMore").hidden = rows.length >= rowsTotal;
+    $("tkMore").textContent = "Show " + Math.min(PAGE, rowsTotal - rows.length) + " more";
+    $("tkListNote").textContent = rows.length && rows.length < rowsTotal ? "Showing " + num(rows.length) + " of " + num(rowsTotal) : "";
+  }
+
+  // ------------------------------------------------------------ loading it all
+
+  // The map, the tier counts and names, and the list, for the current account and world.
+  async function refreshAll() {
+    if (!owner) return null;
+    const ticket = ++loadTicket;
+    const asking = owner;
+    let data;
+    try {
+      data = await getJson("/tracker/overview?" + ownerParam().slice(1) + worldParam());
+    } catch (e) {
+      if (ticket === loadTicket) setLive(false, "offline");
+      return null;
+    }
+    if (ticket !== loadTicket || asking !== owner) return null;
+    overview = data;
+    // The first answer for an account is just the starting total. Later increases are new players.
+    if (lastTotal !== null && data.total_players > lastTotal) showPlus(data.total_players - lastTotal);
+    lastTotal = data.total_players;
+    renderTotal(data.total_players);
+    renderMap();
+    renderScope();
+    renderTiers();
+    loadPreviews(ticket);
+    loadList(false);
+    if (!profile) showMe();
+    return data;
+  }
+
+  // Live events refresh everything, but at most every REFRESH_MS.
+  function scheduleRefresh() {
+    const now = Date.now();
+    if (refreshTimer) return;
+    const wait = Math.max(200, refreshDue - now);
+    refreshTimer = setTimeout(() => { refreshTimer = null; refreshDue = Date.now() + REFRESH_MS; refreshAll(); }, wait);
+  }
+
+  function chooseWorld(name) {
+    world = name && name.toLowerCase() !== world.toLowerCase() ? name : "";
+    store(KEY_WORLD, world);
+    previews = {};
+    rows = [];
+    renderMap();
+    renderScope();
+    refreshAll();
+  }
+
+  function chooseTier(id) {
+    tier = id;
+    store(KEY_TIER, tier);
+    rows = [];
+    renderTiers();
+    renderList();
+    loadList(false);
   }
 
   // ------------------------------------------------------------- scanner status
@@ -347,468 +460,7 @@ try {
 
     box.textContent = text;
     box.className = "tk-scanner" + (on ? " on" : "");
-    box.title = "Set with /scanner true, /scanner true <world> or /scanner false in the game";
-  }
-
-  // ------------------------------------------------------------------ the graph
-
-  // The graph is drawn by the graph engine above. A selected bubble grows and pushes its neighbours aside, and
-  // everything stays smooth however many players there are.
-  function ensureNetwork() {
-    if (network) return;
-    if (typeof GraphKit === "undefined") {
-      overlay("The graph could not be loaded.");
-      return;
-    }
-    network = new GraphKit.FastNetwork($("tkGraph"), nodes, edges, {});
-    network.on("click", onGraphClick);
-    updateStats();
-  }
-
-  function overlay(text) {
-    let box = document.querySelector("#tkGraph .tk-overlay");
-    if (!text) { if (box) box.remove(); return; }
-    if (!box) {
-      box = document.createElement("div");
-      box.className = "tk-overlay";
-      $("tkGraph").appendChild(box);
-    }
-    box.textContent = text;
-  }
-
-  function meNode(name) {
-    return { id: "me", type: "me", label: name, title: name, size: 34, x: 0, y: 0, fixed: true, borderWidth: 6,
-             color: { background: "#12151c", border: COLORS.me.background, highlight: { background: "#222836", border: COLORS.me.background } },
-             font: { size: 22, color: "#e6e9ef", strokeWidth: 4, strokeColor: "#12151c" } };
-  }
-
-  // The size of a world node grows a little with the players around it.
-  function worldSize(players) { return 18 + Math.min(Math.sqrt(players) * 1.3, 14); }
-
-  function worldNode(w, pos) {
-    const c = worldColor(w.world);
-    return { id: w.id, type: "world", world: w.world, players: w.players, visits: w.visits, label: w.world,
-             size: worldSize(w.players), title: w.world, borderWidth: 5,
-             color: { background: "#12151c", border: c, highlight: { background: "#222836", border: c }, hover: { background: "#222836", border: c } },
-             x: pos.x, y: pos.y, font: { size: 17, color: "#e6e9ef", strokeWidth: 4, strokeColor: "#12151c" } };
-  }
-
-  // A branch is drawn in its world's colour, from you to the world and on to its players.
-  // A faint edge joins a player to a branch that is not their home (someone met in two worlds),
-  // so those links are there to find but do not cross the graph in bold lines.
-  function edge(from, to, world, faint) {
-    const e = { id: from + ">" + to, from, to, color: { color: worldColor(world), opacity: faint ? 0.16 : 0.45 } };
-    if (faint) e.dashes = [3, 7];
-    return e;
-  }
-
-  // Brighter and more golden the more you have met them. A pink ring means more than one world.
-  // A player you have been in a party with also gets a blue ring and glow (when that is switched on).
-  const styleCache = new Map();        // a handful of distinct looks, shared between nodes (nothing edits them in place)
-
-  function playerStyle(times, worlds, party) {
-    const glow = partyGlow && party > 0;
-    const key = times + "|" + (worlds > 1) + "|" + glow;
-    let style = styleCache.get(key);
-    if (!style) { style = buildPlayerStyle(times, worlds, glow); styleCache.set(key, style); }
-    return style;
-  }
-
-  function buildPlayerStyle(times, worlds, glow) {
-    const c = meetColor(times);
-    const ring = glow ? PARTY_BLUE : worlds > 1 ? MULTI_PINK : c.edge;
-    // The bubble grows with how often you have met them: 1 time is small, 3 times about three times as wide, 10 times the biggest.
-    const size = Math.min(40, 6 + 6.5 * Math.pow(Math.max(0, times - 1), 0.75)) + (worlds > 1 ? 1 : 0) + (glow ? 2 : 0);
-    return {
-      size, base: size,                // base is the size the layout uses, so a flash or a selection never moves anything
-      borderWidth: glow ? 3 : worlds > 1 ? 2 : 1,
-      color: { background: c.fill, border: ring, highlight: { background: c.fill, border: ring }, hover: { background: c.fill, border: ring } },
-      shadow: glow ? { enabled: true, color: "rgba(56, 160, 255, 0.95)", size: 22, x: 0, y: 0 } : false
-    };
-  }
-
-  function playerNode(p, worlds, pos) {
-    const party = p.party_times || 0;
-    return Object.assign({
-      id: p.id, type: "player", label: p.label, times: p.times_seen, worlds, party, font: { size: 10 },
-      title: p.label + (p.times_seen ? " - met " + p.times_seen + (p.times_seen === 1 ? " time" : " times") : " - only met in a party") +
-             (party ? ", partied " + party + (party === 1 ? " time" : " times") : ""),
-      x: pos.x, y: pos.y
-    }, playerStyle(p.times_seen, worlds, party));
-  }
-
-  // The "Parties" branch: everyone you have been in a party with, like a world node.
-  function partyNode(n, pos) {
-    return Object.assign(worldNode({ id: "party", world: "Parties", players: n.players, visits: 0 }, pos), { type: "party" });
-  }
-
-  // Records that a branch exists. Nothing is positioned here: layout() does that.
-  function placeWorld(id) {
-    if (!branchOrder.includes(id)) branchOrder.push(id);
-    return { x: 0, y: 0 };
-  }
-
-  // Records which branch a player sits round (the first one they were met in).
-  function placePlayer(branchId, playerId) {
-    if (!home.has(playerId)) {
-      home.set(playerId, branchId);
-      if (!members.has(branchId)) members.set(branchId, []);
-      members.get(branchId).push(playerId);
-    }
-    return { x: 0, y: 0 };
-  }
-
-  const packed = new Map();         // branch id -> { sig, spots: [{ id, dx, dy }], radius }, so unchanged branches are not packed again
-
-  // Packs a branch's players as bubbles round its centre. The biggest (the players you have met
-  // most) go first, so they sit closest to the middle, and the smaller ones fill in outward. Each one
-  // takes the first free spot on a spiral where it does not touch another.
-  function packBranch(id, centre) {
-    const items = (members.get(id) || []).map((pid, order) => ({ pid, order, node: nodes.get(pid) }))
-      .filter(i => i.node)
-      .map(i => ({ id: i.pid, order: i.order, r: (i.node.base || i.node.size || 6) + 3 }));
-
-    const sig = centre + "|" + items.map(i => i.id + ":" + i.r.toFixed(1)).join(",");
-    const kept = packed.get(id);
-    if (kept && kept.sig === sig) return kept;
-
-    items.sort((a, b) => (b.r - a.r) || (a.order - b.order));      // biggest first, then in the order they arrived
-
-    const grid = new Map();
-    const cellKey = (gx, gy) => (gx + 5000) * 10000 + (gy + 5000);
-    const biggest = items.length ? items[0].r : 0;
-    const spots = [];
-    let radius = centre, start = 0;
-
-    const fits = (x, y, r) => {
-      if (Math.hypot(x, y) < centre + r + BUBBLE_GAP) return false;               // clear of the world's own ring
-      const reach = Math.ceil((r + biggest + BUBBLE_GAP) / BUBBLE_CELL);
-      const cx = Math.floor(x / BUBBLE_CELL), cy = Math.floor(y / BUBBLE_CELL);
-      for (let gx = cx - reach; gx <= cx + reach; gx++) {
-        for (let gy = cy - reach; gy <= cy + reach; gy++) {
-          const cell = grid.get(cellKey(gx, gy));
-          if (!cell) continue;
-          for (const o of cell) if (Math.hypot(x - o.x, y - o.y) < r + o.r + BUBBLE_GAP) return false;
-        }
-      }
-      return true;
-    };
-
-    for (const item of items) {
-      let k = Math.max(0, start - 80);                    // small ones may fill gaps a little behind the frontier
-      for (; k < 300000; k++) {
-        const turn = k * 2.399963, out = centre + 6 + 5.5 * Math.sqrt(k);
-        const x = Math.cos(turn) * out, y = Math.sin(turn) * out;
-        if (!fits(x, y, item.r)) continue;
-
-        const key = cellKey(Math.floor(x / BUBBLE_CELL), Math.floor(y / BUBBLE_CELL));
-        if (!grid.has(key)) grid.set(key, []);
-        grid.get(key).push({ x, y, r: item.r });
-        spots.push({ id: item.id, dx: x, dy: y });
-        radius = Math.max(radius, Math.hypot(x, y) + item.r);
-        break;
-      }
-      start = Math.max(start, k);
-    }
-
-    const result = { sig, spots, radius };
-    packed.set(id, result);
-    return result;
-  }
-
-  // Lays out, retitles and re-counts the graph, but not more often than LAYOUT_THROTTLE_MS: while a run of
-  // pages is arriving in the background, each one would otherwise re-pack and redraw every player loaded so
-  // far, not just the new ones, which is what made loading a big tracker database feel slow. immediate=true
-  // (the first page, "Load more players", and the last page of a run) skips the wait and draws right away.
-  function scheduleLayout(immediate) {
-    if (immediate) {
-      if (layoutTimer) { clearTimeout(layoutTimer); layoutTimer = null; }
-      layout();
-      refreshWorldTitles();
-      updateStats();
-      return;
-    }
-    if (layoutTimer) return;
-    layoutTimer = setTimeout(() => {
-      layoutTimer = null;
-      layout();
-      refreshWorldTitles();
-      updateStats();
-    }, LAYOUT_THROTTLE_MS);
-  }
-
-  // Puts everything where it belongs. You are in the middle. Each branch gets a circle of room
-  // big enough for its players, and the circles are spaced round a ring that is wide enough
-  // that none of them touches another or comes near you. Players fill their circle in a spiral.
-  // Only nodes whose spot changed are moved, so a node you dragged stays where you put it.
-  function layout() {
-    const ids = branchOrder.filter(id => nodes.get(id));
-    if (!ids.length) return;
-
-    const packs = ids.map(id => packBranch(id, (nodes.get(id).size || 22) + 8));
-    const rooms = packs.map(p => Math.ceil((p.radius + ROOM_PAD) / ROOM_STEP) * ROOM_STEP);
-    const span = (ring) => rooms.reduce((sum, room) => sum + 2 * Math.asin(Math.min(1, (room + 20) / ring)), 0);
-
-    let ring = Math.max(300, ...rooms.map(room => room + ME_CLEAR));
-    while (span(ring) > 2 * Math.PI && ring < 1e6) ring += 40;
-
-    // Spread any spare angle evenly between the branches.
-    const slack = (2 * Math.PI - span(ring)) / ids.length;
-    const moves = [];
-    const put = (id, x, y) => {
-      const old = spots.get(id);
-      if (!old || Math.abs(old.x - x) > 0.5 || Math.abs(old.y - y) > 0.5) {
-        spots.set(id, { x, y });
-        moves.push({ id, x, y, fresh: !old });
-      }
-    };
-
-    put("me", 0, 0);
-    let angle = -Math.PI / 2;
-    ids.forEach((id, i) => {
-      const half = Math.asin(Math.min(1, (rooms[i] + 20) / ring));
-      angle += slack / 2 + half;
-      const cx = Math.cos(angle) * ring, cy = Math.sin(angle) * ring;
-      angle += half + slack / 2;
-
-      put(id, cx, cy);
-      packs[i].spots.forEach(s => put(s.id, cx + s.dx, cy + s.dy));
-    });
-
-    if (moves.length) applyMoves(moves);
-    fadeCrowdedEdges(ids);
-  }
-
-  // A world with hundreds of players has hundreds of lines, and at full strength they hide the bubbles.
-  // The more players a branch has, the fainter its lines are. (They light up when you select a bubble.)
-  function fadeCrowdedEdges(ids) {
-    const changes = [];
-    for (const id of ids) {
-      const count = (members.get(id) || []).length;
-      const want = count > 300 ? 0.05 : count > 80 ? 0.1 : count > 25 ? 0.22 : 0.45;
-      for (const e of edges.get({ filter: x => x.from === id && !x.dashes })) {
-        if (e.color && Math.abs((e.color.opacity || 0) - want) > 0.001) {
-          changes.push({ id: e.id, color: { color: e.color.color, opacity: want } });
-        }
-      }
-    }
-    if (changes.length) edges.update(changes);
-  }
-
-  // Moves nodes to their spots. New nodes appear where they belong. Nodes that were already
-  // drawn glide there, so when a world's room grows and the ring widens, the graph slides
-  // smoothly instead of jumping.
-  function applyMoves(moves) {
-    const fresh = moves.filter(m => m.fresh || !network);
-    const shifting = moves.filter(m => !m.fresh && network);
-    if (fresh.length) nodes.update(fresh.map(m => ({ id: m.id, x: m.x, y: m.y })));
-
-    if (shifting.length < 15) {
-      if (shifting.length) nodes.update(shifting.map(m => ({ id: m.id, x: m.x, y: m.y })));
-    } else {
-      network.animateTo(shifting, 450, () => nodes.update(shifting.map(m => ({ id: m.id, x: m.x, y: m.y }))));
-    }
-  }
-
-  function resetGraph() {
-    nodes.clear();
-    edges.clear();
-    branchOrder.length = 0;
-    packed.clear();
-    members.clear();
-    home.clear();
-    spots.clear();
-    worldPlayers.clear();
-    playerWorlds.clear();
-    flashTimers.forEach(t => clearTimeout(t));
-    flashTimers.clear();
-    if (layoutTimer) { clearTimeout(layoutTimer); layoutTimer = null; }
-    fitted = false;
-    overlay(null);
-  }
-
-  // Remembers that a player is around a world.
-  function link(worldId, playerId) {
-    if (!worldPlayers.has(worldId)) worldPlayers.set(worldId, new Set());
-    worldPlayers.get(worldId).add(playerId);
-    if (!playerWorlds.has(playerId)) playerWorlds.set(playerId, new Set());
-    playerWorlds.get(playerId).add(worldId);
-  }
-
-  // Adds a page of history (the answer from /tracker/tree) to the graph. immediate=false (the default) lets
-  // a run of background pages coalesce their layout and redraw instead of paying for it after every page;
-  // pass true for a page that should appear right away (the first one, and "Load more players").
-  function addTree(tree, immediate) {
-    if (!nodes.get("me")) nodes.update(meNode(tree.nodes[0].label));
-
-    const firstWorld = new Map();      // player node id -> the first world (or the party branch) it appears in
-    for (const l of tree.links) {
-      if (l.source === "party") {
-        // Being in a party does not make someone "in more than one world", so it is kept apart.
-        if (!worldPlayers.has("party")) worldPlayers.set("party", new Set());
-        worldPlayers.get("party").add(l.target);
-        if (!firstWorld.has(l.target)) firstWorld.set(l.target, "party");
-        continue;
-      }
-      if (l.source.charAt(0) !== "w") continue;
-      if (!firstWorld.has(l.target) || firstWorld.get(l.target) === "party") firstWorld.set(l.target, l.source);
-      link(l.source, l.target);
-    }
-
-    // Each player sits round the world they were met in most (then the first alphabetically),
-    // or round Parties if they were never met in a lobby.
-    const homeOf = new Map();
-    for (const p of tree.nodes.filter(n => n.type === "player")) {
-      const met = Object.entries(p.worlds || {}).sort((x, y) => (y[1] - x[1]) || x[0].localeCompare(y[0]));
-      homeOf.set(p.id, met.length ? "w:" + met[0][0] : "party");
-    }
-
-    const newNodes = [], newEdges = [];
-
-    for (const n of tree.nodes.filter(n => n.type === "party")) {
-      const old = nodes.get(n.id);
-      if (old) newNodes.push({ id: n.id, players: Math.max(old.players, n.players) });
-      else newNodes.push(partyNode(n, placeWorld(n.id)));
-    }
-
-    for (const w of tree.nodes.filter(n => n.type === "world")) {
-      const old = nodes.get(w.id);
-      if (old) newNodes.push({ id: w.id, players: Math.max(old.players, w.players), visits: w.visits });
-      else newNodes.push(worldNode(w, placeWorld(w.id)));
-    }
-    for (const p of tree.nodes.filter(n => n.type === "player")) {
-      const worlds = (playerWorlds.get(p.id) || new Set()).size;
-      if (nodes.get(p.id)) {
-        newNodes.push(Object.assign({ id: p.id, times: p.times_seen, worlds, party: p.party_times || 0 },
-                                    playerStyle(p.times_seen, worlds, p.party_times || 0)));
-      } else {
-        newNodes.push(playerNode(p, worlds, placePlayer(homeOf.get(p.id) || firstWorld.get(p.id), p.id)));
-      }
-    }
-    for (const l of tree.links) {
-      const world = l.source === "me" ? l.target : l.source;
-      const faint = l.source !== "me" && home.get(l.target) !== l.source;
-      newEdges.push(edge(l.source, l.target, (nodes.get(world) || newNodes.find(n => n.id === world) || {}).world || "Unknown", faint));
-    }
-
-    nodes.update(newNodes);
-    edges.update(newEdges);
-    scheduleLayout(immediate);
-    if (panelIsMe) showMe();               // the summary in the side panel follows the pages as they load
-  }
-
-  // Player counts change as people arrive: keep the world nodes' size and tooltip up to date.
-  function refreshWorldTitles() {
-    const updates = [];
-    worldPlayers.forEach((set, id) => {
-      const w = nodes.get(id);
-      if (!w) return;
-      const players = Math.max(w.players || 0, set.size);
-      updates.push({ id, players, size: worldSize(players), title: w.world + " - " + players + (players === 1 ? " player" : " players") });
-    });
-    nodes.update(updates);
-  }
-
-  function updateStats() {
-    const worlds = nodes.get({ filter: n => n.type === "world" }).length;
-    const players = nodes.get({ filter: n => n.type === "player" }).length;
-    const shared = nodes.get({ filter: n => n.type === "player" && n.worlds > 1 }).length;
-    const branches = worlds + nodes.get({ filter: n => n.type === "party" }).length;
-    const where = filterWorlds.length ? " in " + filterWorlds.join(", ") : "";
-    $("tkStats").textContent = worlds + (worlds === 1 ? " world" : " worlds") + " · " +
-                               players + (players === 1 ? " player" : " players") + " shown" + where +
-                               (shared ? " · " + shared + " in more than one world" : "");
-    $("tkMore").hidden = !hasMore;
-    renderLinks();
-    overlay(branches === 0
-      ? (filterWorlds.length
-          ? "No players in the chosen worlds yet. Pick another world, or All worlds."
-          : "No players recorded yet. Turn the scanner on in the game with /scanner true, join a lobby, and the players will appear here.")
-      : null);
-    renderLegend();
-  }
-
-  // ------------------------------------------------------- connections between worlds
-
-  // The world nodes for the chosen filter, matched ignoring capitalisation.
-  function chosenWorldNodes() {
-    const found = [];
-    for (const name of filterWorlds) {
-      const n = nodes.get({ filter: x => x.type === "world" && x.world.toLowerCase() === name.toLowerCase() })[0];
-      if (n) found.push(n);
-    }
-    return found;
-  }
-
-  // The players who were met in every one of these worlds.
-  function playersInAll(worldIds) {
-    const out = [];
-    playerWorlds.forEach((set, pid) => { if (worldIds.every(id => set.has(id))) out.push(pid); });
-    return out;
-  }
-
-  // With two or more worlds chosen, says how many players connect them. The lines on the graph
-  // are hard to count, so this counts them: someone met in both worlds is one connection.
-  function renderLinks() {
-    const box = $("tkLinks");
-    const chosen = chosenWorldNodes();
-    if (filterWorlds.length < 2 || chosen.length < 2) { box.hidden = true; box.innerHTML = ""; return; }
-
-    const pairs = [];
-    for (let i = 0; i < chosen.length; i++) {
-      for (let j = i + 1; j < chosen.length; j++) {
-        pairs.push({ a: chosen[i], b: chosen[j], n: playersInAll([chosen[i].id, chosen[j].id]).length });
-      }
-    }
-    pairs.sort((x, y) => y.n - x.n);
-
-    const dot = (w) => '<i style="background:' + esc(worldColor(w.world)) + '"></i>';
-    let html = pairs.slice(0, 12).map(p =>
-      '<button class="tk-link" data-a="' + esc(p.a.id) + '" data-b="' + esc(p.b.id) + '" title="Show who they are">' +
-      dot(p.a) + esc(p.a.world) + ' <span class="tk-arrow">↔</span> ' + dot(p.b) + esc(p.b.world) +
-      " <b>" + p.n.toLocaleString() + "</b><small>" + (p.n === 1 ? "player" : "players") + " in both</small></button>").join("");
-
-    if (chosen.length > 2) {
-      html += '<button class="tk-link" data-all="1" title="Show who they are"><span class="tk-arrow">All ' + chosen.length + " worlds</span> <b>" +
-              playersInAll(chosen.map(w => w.id)).length.toLocaleString() + "</b><small>players in every one</small></button>";
-    }
-    if (hasMore) html += '<span class="tk-note">Still loading players, so these counts can go up.</span>';
-
-    box.innerHTML = html;
-    box.hidden = false;
-  }
-
-  // The names behind a count, in the side panel.
-  function showConnections(worldIds) {
-    detailTicket++;
-    profileName = null;
-    profile = null;
-    panelIsMe = false;
-    const worlds = worldIds.map(id => nodes.get(id)).filter(Boolean);
-    const players = playersInAll(worldIds).map(pid => nodes.get(pid)).filter(Boolean)
-      .sort((a, b) => a.label.toLowerCase().localeCompare(b.label.toLowerCase()));
-
-    $("tkDetailsBody").innerHTML =
-      '<div class="tk-name">Connections</div>' +
-      '<dl class="tk-kv"><dt>Worlds</dt><dd>' + worlds.map(w => '<span class="tk-w"><i style="background:' + esc(worldColor(w.world)) + '"></i>' + esc(w.world) + "</span>").join("<br>") +
-      "</dd><dt>Players in every one</dt><dd>" + players.length.toLocaleString() + "</dd></dl>" +
-      '<div class="tk-sub">Players (' + players.length.toLocaleString() + ")</div>" +
-      (players.length
-        ? '<div class="tk-chips">' + players.map(p => '<button class="tk-chip" data-node="' + esc(p.id) + '" data-player="' + esc(p.label) + '">' + esc(p.label) + "</button>").join("") + "</div>"
-        : '<div class="empty">Nobody has been met in all of these worlds.</div>');
-  }
-
-  // A newly seen player flashes green, a returning one orange, then returns to normal.
-  function flash(id, returning) {
-    const node = nodes.get(id);
-    if (!node) return;
-    clearTimeout(flashTimers.get(id));
-    nodes.update({ id, size: (node.base || 8) + 6, borderWidth: 3, color: returning ? COLORS.flashOld : COLORS.flashNew });
-    flashTimers.set(id, setTimeout(() => {
-      flashTimers.delete(id);
-      const current = nodes.get(id);
-      if (current) nodes.update(Object.assign({ id }, playerStyle(current.times, current.worlds, current.party)));
-    }, FLASH_MS));
+    box.title = "The scanner is always on, in every world, while the mod is enabled";
   }
 
   // ------------------------------------------------------------------ live feed
@@ -829,17 +481,18 @@ try {
     const watching = owner;
 
     stream = new EventSource("/tracker/live?owner=" + encodeURIComponent(watching) + "&since=" + cursor);
-    stream.onopen = () => { setLive(true, "live"); refreshParty(); loadMyChat(); };
+    stream.onopen = () => { setLive(true, "live"); loadMyChat(); };
     stream.onmessage = (event) => {
       if (watching !== owner) return;
       const ev = JSON.parse(event.data);
-      if (ev.kind === "party") { applyParty(ev); return; }   // party and chat events have their own ids
+      if (ev.kind === "party") { onParty(ev); return; }    // party and chat events have their own ids
       if (ev.kind === "chat") { applyChat(ev); return; }
       if (ev.kind === "mychat") { applyMyChat(ev); return; }
       if (ev.id <= lastEventId) return;          // a repeat after a reconnect
       lastEventId = ev.id;
-      pendingEvents.push(ev);
-      if (!batchTimer) batchTimer = setTimeout(applyEvents, BATCH_MS);
+      if (ev.returning) queueAlert(ev);
+      if (profileName && profileName.toLowerCase() === String(ev.username).toLowerCase()) showPlayer(profileName);
+      scheduleRefresh();
     };
     stream.onerror = () => {
       // Reconnect from the newest event seen, so nothing is repeated or missed.
@@ -849,117 +502,10 @@ try {
     };
   }
 
-  // ------------------------------------------------------------------- party
-
-  // Someone was just confirmed to be in your party. They go on the Parties branch (which is
-  // made if it is new), their dot gets the glow, and the counts are refreshed. With a world
-  // filter on, the branch is not shown, so only a player already drawn is updated.
-  function applyParty(ev) {
-    const pId = "p" + ev.player_id;
-    const known = nodes.get(pId);
-    const newNodes = [], newEdges = [];
-
-    if (!filterWorlds.length) {
-      if (!nodes.get("party")) {
-        newNodes.push(partyNode({ players: 0 }, placeWorld("party")));
-        newEdges.push(edge("me", "party", "Parties"));
-      }
-      if (!worldPlayers.has("party")) worldPlayers.set("party", new Set());
-      worldPlayers.get("party").add(pId);
-      if (known) {
-        newNodes.push(Object.assign({ id: pId, party: ev.party_times }, playerStyle(known.times, known.worlds, ev.party_times)));
-      } else {
-        newNodes.push(playerNode({ id: pId, label: ev.username, times_seen: 0, party_times: ev.party_times }, 0, placePlayer("party", pId)));
-      }
-      newEdges.push(edge("party", pId, "Parties", home.get(pId) !== "party"));
-    } else if (known) {
-      newNodes.push(Object.assign({ id: pId, party: ev.party_times }, playerStyle(known.times, known.worlds, ev.party_times)));
-    }
-
-    nodes.update(newNodes);
-    edges.update(newEdges);
-    layout();
-    refreshWorldTitles();
-    updateStats();
-    if (panelIsMe) showMe();
+  // Someone was just confirmed to be in your party.
+  function onParty(ev) {
     if (profileName && profileName.toLowerCase() === String(ev.username).toLowerCase()) showPlayer(profileName);
-    clearTimeout(worldTimer);
-    worldTimer = setTimeout(refreshWorlds, 200);
-  }
-
-  // Everyone this account has partied with, from the website. Used when the live feed (re)connects,
-  // in case a party event was missed while it was down.
-  async function refreshParty() {
-    const asking = owner;
-    if (!asking) return;
-    try {
-      const data = await getJson("/tracker/party?owner=" + encodeURIComponent(asking));
-      if (asking !== owner) return;
-      for (const p of data.players) {
-        const node = nodes.get("p" + p.id);
-        const linked = filterWorlds.length || edges.get("party>p" + p.id);
-        if (!node || node.party !== p.times || !linked) applyParty({ player_id: p.id, username: p.username, party_times: p.times });
-      }
-    } catch (e) { /* keep what is drawn */ }
-  }
-
-  // Draws the events that arrived together in one go.
-  function applyEvents() {
-    batchTimer = null;
-    const events = pendingEvents;
-    pendingEvents = [];
-
-    const newNodes = [], newEdges = [];
-    const touched = [];
-    let newWorld = false;
-
-    for (const ev of events) {
-      // Alerts are about everyone the scanner saw, whatever the graph is filtered to.
-      if (ev.returning) queueAlert(ev);
-      if (!worldsList.some(w => w.world.toLowerCase() === ev.world.toLowerCase())) newWorld = true;
-
-      // The graph only shows what matches the world filter.
-      if (!inFilter(ev.world)) continue;
-
-      const wId = "w:" + ev.world, pId = "p" + ev.player_id;
-
-      if (!nodes.get(wId) && !newNodes.some(n => n.id === wId)) {
-        newNodes.push(worldNode({ id: wId, world: ev.world, players: 0, visits: 1 }, placeWorld(wId)));
-        newEdges.push(edge("me", wId, ev.world));
-      }
-      link(wId, pId);
-      const worlds = playerWorlds.get(pId).size;
-      placePlayer(wId, pId);          // a new player sits round this world (a known one keeps its home)
-
-      const pending = newNodes.find(n => n.id === pId);
-      if (pending) {
-        pending.times = ev.times_seen;
-        pending.worlds = worlds;
-        pending.party = ev.party_times || 0;
-        Object.assign(pending, playerStyle(ev.times_seen, worlds, pending.party));
-      } else if (nodes.get(pId)) {
-        const party = ev.party_times || 0;
-        newNodes.push(Object.assign({ id: pId, times: ev.times_seen, worlds, party }, playerStyle(ev.times_seen, worlds, party)));
-      } else {
-        newNodes.push(playerNode({ id: pId, label: ev.username, times_seen: ev.times_seen, party_times: ev.party_times }, worlds, { x: 0, y: 0 }));
-      }
-      newEdges.push(edge(wId, pId, ev.world, home.get(pId) !== wId));
-      touched.push({ id: pId, returning: ev.returning });
-    }
-
-    nodes.update(newNodes);
-    edges.update(newEdges);
-    layout();
-    refreshWorldTitles();
-    updateStats();
-    if (panelIsMe) showMe();
-
-    for (const t of touched) flash(t.id, t.returning);
-
-    // Counts in the world chips change as players arrive. Ask again once things settle.
-    clearTimeout(worldTimer);
-    worldTimer = setTimeout(refreshWorlds, newWorld ? 200 : WORLD_REFRESH_MS);
-
+    scheduleRefresh();
   }
 
   // ----------------------------------------------------------------------- alerts
@@ -967,8 +513,8 @@ try {
   function alertsOn() { return $("tkAlerts").checked; }
 
   // "in Crystal Hollows" when the last meeting's world is known.
-  function whereText(world) {
-    return world && world !== "Unknown" ? " in " + world : "";
+  function whereText(name) {
+    return name && name !== "Unknown" ? " in " + name : "";
   }
 
   // "Hub", "Hub and Dungeon Hub", "Hub, Dungeon Hub and The End"
@@ -1029,161 +575,244 @@ try {
 
   function toast(title, body, player) {
     const box = $("toasts");
-    const el = document.createElement("div");
-    el.className = "toast";
-    el.innerHTML = '<div class="toast-title"></div><div class="toast-body"></div>' +
+    const node = document.createElement("div");
+    node.className = "toast";
+    node.innerHTML = '<div class="toast-title"></div><div class="toast-body"></div>' +
                    (player ? '<button class="toast-view">View profile</button>' : "") +
                    '<button class="toast-x" aria-label="Dismiss">×</button>';
-    el.querySelector(".toast-title").textContent = title;
-    el.querySelector(".toast-body").textContent = body;
-    el.querySelector(".toast-x").onclick = () => el.remove();
-    const view = el.querySelector(".toast-view");
-    if (view) view.onclick = () => { el.remove(); openPlayer(player); };
+    node.querySelector(".toast-title").textContent = title;
+    node.querySelector(".toast-body").textContent = body;
+    node.querySelector(".toast-x").onclick = () => node.remove();
+    const view = node.querySelector(".toast-view");
+    if (view) view.onclick = () => { node.remove(); openPlayer(player); };
 
-    box.appendChild(el);
+    box.appendChild(node);
     while (box.children.length > MAX_TOASTS) box.firstChild.remove();
-    setTimeout(() => el.remove(), player ? 9000 : 12000);
+    setTimeout(() => node.remove(), player ? 9000 : 12000);
   }
 
+  // The alert log only takes room once there is something in it.
   function renderAlertLog() {
-    const box = $("tkAlertLog");
-    if (!alertLog.length) {
-      box.innerHTML = '<div class="empty">No alerts yet. You are told here when a player you have met before shows up in your lobby, and when they were in another world.</div>';
-      return;
-    }
-    box.innerHTML = alertLog.map(a => {
+    $("tkAlertPanel").hidden = !alertLog.length;
+    $("tkAlertCount").textContent = alertLog.length ? String(alertLog.length) : "";
+    $("tkAlertLog").innerHTML = alertLog.map(a => {
       const others = (a.before || []).filter(w => w.toLowerCase() !== String(a.now || "").toLowerCase() && w !== "Unknown");
       const detail = a.before
         ? (a.now && a.now !== "Unknown" ? "Now in " + a.now + ". " : "") +
           (others.length ? "Also seen in " + listWorlds(others) + ". " : "") + "Last seen " + fmtShort(a.previous)
         : "Last seen " + fmtShort(a.previous) + whereText(a.world);
       return '<div class="tk-alert"><button data-player="' + esc(a.name) + '">' + esc(a.name) + "</button>" +
-        "<small>" + esc(detail) + " · alerted " + esc(fmtShort(new Date(a.t).toISOString())) + "</small></div>";
+        "<small>" + esc(detail) + " · alerted " + esc(ago(new Date(a.t).toISOString())) + "</small></div>";
     }).join("");
   }
 
-  // ---------------------------------------------------------------- details panel
+  // ---------------------------------------------------------------- player panel
 
-  function worldChips(byWorld) {
-    const entries = Object.entries(byWorld);
-    return '<div class="tk-sub">Worlds</div><div class="tk-wchips">' +
-      '<button class="tk-wchip' + (filterWorlds.length === 0 ? " on" : "") + '" data-world="">All</button>' +
-      entries.map(([world, n]) =>
-        '<button class="tk-wchip' + (filterWorlds.length && inFilter(world) ? " on" : "") + '" data-world="' + esc(world) + '">' +
-        '<i style="background:' + esc(worldColor(world)) + '"></i>' + esc(world) + ": " + n + "</button>").join("") +
-      "</div>";
-  }
-
-  // explicit is true only when you chose the player (a click on their dot, a search result, an
-  // alert or a chip). That is the ONLY time their Hypixel status is looked up. Redrawing the panel
-  // for any other reason (a filter change, a new party or chat event) never asks Hypixel.
-  async function showPlayer(username, nodeId, explicit) {
-    if (explicit) statusView = null;
+  // explicit is true only when you chose the player (a click in the list, a search result, an alert). That is the
+  // ONLY time their Hypixel status is looked up. Redrawing the panel for any other reason never asks Hypixel.
+  async function showPlayer(username, explicit) {
+    if (explicit) { statusView = null; tagError = ""; }
     else if (statusView && statusView.name.toLowerCase() !== username.toLowerCase()) statusView = null;
     const ticket = ++detailTicket;
+    const switching = !profileName || profileName.toLowerCase() !== username.toLowerCase();
     profileName = username;
-    profile = null;
-    panelIsMe = false;
-    const body = $("tkDetailsBody");
-    body.innerHTML = '<div class="empty">Loading…</div>';
+    if (switching) {
+      profile = null;
+      $("tkDetailsBody").innerHTML = '<div class="empty">Loading…</div>';
+    }
+    markRow();
 
     let data;
     try {
-      data = await getJson("/tracker/search?q=" + encodeURIComponent(username) + "&exact=true" + worldParams() + ownerParam());
+      data = await getJson("/tracker/search?q=" + encodeURIComponent(username) + "&exact=true" + ownerParam());
     } catch (e) {
-      if (ticket === detailTicket) body.innerHTML = '<div class="empty">Could not load that player.</div>';
+      if (ticket === detailTicket) $("tkDetailsBody").innerHTML = '<div class="empty">Could not load that player.</div>';
       return;
     }
     if (ticket !== detailTicket) return;
 
     let p = data.players[0];
-    if (!p && filterWorlds.length) {
-      // Not met in the chosen worlds. Show them anyway, with the worlds they were met in.
-      try {
-        p = (await getJson("/tracker/search?q=" + encodeURIComponent(username) + "&exact=true" + ownerParam())).players[0];
-        if (ticket !== detailTicket) return;
-        if (p) { p.sightings = []; p.matching = 0; }
-      } catch (e) { /* fall through */ }
-    }
-    if (!p && isValidName(username)) {                   // not in the database: still show who they are, and whether they are online
-      profile = { p: unknownPlayer(username), filtered: false };
-      renderProfile();
-      if (explicit) { loadStatus(username, false); loadDiscord(username); }
-      return;
-    }
-    if (!p) { body.innerHTML = '<div class="empty">No record of ' + esc(username) + ".</div>"; return; }
+    if (!p && isValidName(username)) p = unknownPlayer(username);     // not in the database: still show who they are
+    if (!p) { $("tkDetailsBody").innerHTML = '<div class="empty">No record of ' + esc(username) + ".</div>"; return; }
 
-    profile = { p, filtered: filterWorlds.length > 0 };
+    profile = p;
     renderProfile();                      // your saved history first, so nothing waits on Hypixel
     if (explicit) { loadStatus(p.username, false); loadDiscord(p.username); }
+    if (explicit && window.matchMedia("(max-width: 1080px)").matches) $("tkDetails").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
-    highlight(nodeId || "p" + p.id);
+  function markRow() {
+    const open = profileName ? profileName.toLowerCase() : "";
+    document.querySelectorAll("#tkRows .tk-row").forEach(r => r.classList.toggle("on", r.dataset.player.toLowerCase() === open));
+  }
+
+  // A player who is not in the database (searched for by name). Nothing is saved for them.
+  function unknownPlayer(name) {
+    return { username: name, unknown: true, times_seen: 0, meetings: 0, first_seen: null, last_seen: null, party_times: 0,
+             parties: [], chat_count: 0, chats: [], sightings: [], meeting_list: [], by_world: {}, tag: null };
   }
 
   // The face of a player's skin, drawn by a public skin service from their username. Only a valid
   // username is ever put in the address. If the picture cannot load (offline, no such account) it just goes away.
   function faceHtml(name) {
     if (!isValidName(name)) return "";
-    return '<img class="tk-face" alt="" width="56" height="56" src="https://mc-heads.net/avatar/' +
-           encodeURIComponent(name) + '/112" onerror="this.remove()">';
+    return '<img class="tk-face" alt="" width="52" height="52" src="https://mc-heads.net/avatar/' +
+           encodeURIComponent(name) + '/104" onerror="this.remove()">';
   }
 
-  // The panel for one player: a Details tab and a Chat tab.
   function renderProfile() {
-    if (!profile) return;
-    const { p } = profile;
-    const chats = p.chat_count || 0;
-    const tab = (id, label) => '<button class="tk-tab' + (playerTab === id ? " on" : "") + '" data-ptab="' + id + '">' + label + "</button>";
+    const p = profile;
+    if (!p) return;
+    const tab = (id, label, n) => '<button class="tk-tab' + (playerTab === id ? " on" : "") + '" data-ptab="' + id + '">' + label +
+      (n ? " <small>" + num(n) + "</small>" : "") + "</button>";
+    let body;
+    if (playerTab === "chat") body = chatHtml(p);
+    else if (playerTab === "parties") body = partiesHtml(p);
+    else body = meetingsHtml(p);
 
     $("tkDetailsBody").innerHTML =
-      '<div class="tk-head">' + faceHtml(p.username) + '<div class="tk-name">' + esc(p.username) + "</div></div>" +
-      '<div class="tk-tabs">' + tab("details", "Details") + tab("chat", "Chat" + (chats ? " <small>" + chats + "</small>" : "")) + "</div>" +
-      (playerTab === "chat" ? chatHtml(p) : detailsHtml(p, profile.filtered));
+      '<div class="tk-head">' + faceHtml(p.username) +
+        '<div class="tk-headtext"><div class="tk-name">' + esc(p.username) + "</div>" + tagLine(p) + "</div>" +
+        '<button class="tk-x" data-close="1" title="Back to the account summary" aria-label="Close">×</button></div>' +
+      presenceHtml(p) +
+      (p.unknown
+        ? '<div class="tk-unknown"><b>Not in your database.</b> You have never met, partied with or heard from ' + esc(p.username) +
+          ". Looking them up does not save anything.</div>"
+        : statsHtml(p) + worldsBarHtml(p) + accountsHtml(p)) +
+      actionsHtml(p) +
+      (p.unknown ? "" :
+        '<div class="tk-tabs">' + tab("meetings", "Meetings", p.meetings) + tab("chat", "Chat", p.chat_count) +
+          tab("parties", "Parties", p.party_times) + "</div>" + body);
     tickStatusClock();
   }
 
-  // A player who is not in the database (searched for by name). Nothing is saved for them.
-  function unknownPlayer(name) {
-    return { username: name, unknown: true, times_seen: 0, first_seen: null, last_seen: null, matching: 0, party_times: 0,
-             parties: [], chat_count: 0, chats: [], sightings: [], by_world: {} };
+  // The friendly/enemy tag and its note, under the name.
+  function tagLine(p) {
+    if (!p.tag) return "";
+    return '<div class="tk-tagline"><span class="tk-tagpill ' + esc(p.tag.tag) + '">' + esc(p.tag.tag) + "</span>" +
+      (p.tag.notes ? '<span class="tk-tagnote">' + esc(p.tag.notes) + "</span>" : "") + "</div>";
   }
 
+  // Where they were last seen by your own accounts (always known, no key needed), then Hypixel's live status and Discord.
+  function presenceHtml(p) {
+    const last = (p.sightings || [])[0];
+    const seen = last
+      ? '<span class="tk-seen">Seen by you ' + agoHtml(last.seen_at) + " · " + dot(last.world) + esc(last.world) +
+        (last.account ? '<span class="tk-dim"> · ' + esc(last.account) + "</span>" : "") + "</span>"
+      : '<span class="tk-seen tk-dim">' + (p.unknown ? "Never seen by your accounts" : "Not met in a lobby yet") + "</span>";
+    return '<div class="tk-presence">' + seen + statusHtml(p) + discordHtml(p) + "</div>";
+  }
 
-  function detailsHtml(p, filtered) {
-    if (p.unknown) {
-      return statusHtml(p) + discordHtml(p) +
-        '<div class="tk-unknown"><b>Not in your database.</b> You have never met, partied with or heard from ' + esc(p.username) +
-        ". Looking them up does not save anything. If you meet them in a lobby while the scanner is on, they are added then.</div>";
+  function statsHtml(p) {
+    const cell = (value, label, title) => '<div class="tk-stat"' + (title ? ' title="' + esc(title) + '"' : "") + "><b>" + value + "</b><span>" + label + "</span></div>";
+    return '<div class="tk-stats4">' +
+      cell(num(p.meetings), p.meetings === 1 ? "meeting" : "meetings",
+           plural(p.times_seen, "sighting") + " in all. Sightings less than 4 hours after a meeting starts are part of it.") +
+      cell(p.first_seen ? esc(ago(p.first_seen)) : "–", "first met", p.first_seen ? fmtFull(p.first_seen) : "") +
+      cell(num(p.party_times), p.party_times === 1 ? "party" : "parties") +
+      cell(num(p.chat_count), p.chat_count === 1 ? "message" : "messages") + "</div>";
+  }
+
+  // Meetings per world, as one bar.
+  function worldsBarHtml(p) {
+    const per = {};
+    for (const m of p.meeting_list || []) for (const w of m.worlds) per[w] = (per[w] || 0) + 1;
+    const list = Object.entries(per).sort((a, b) => b[1] - a[1]);
+    if (!list.length) return "";
+    const total = list.reduce((s, [, n]) => s + n, 0);
+    return '<div class="tk-sub">Worlds</div><div class="tk-wbar">' +
+      list.map(([w, n]) => '<i style="flex:' + n + ";background:" + esc(worldColor(w)) + '" title="' + esc(w + ": " + plural(n, "meeting")) + '"></i>').join("") +
+      '</div><div class="tk-wlegend">' +
+      list.map(([w, n]) => "<span>" + dot(w) + esc(w) + " <small>" + Math.round((n / total) * 100) + "%</small></span>").join("") + "</div>";
+  }
+
+  // Which of your accounts met them, when more than one did.
+  function accountsHtml(p) {
+    const per = {};
+    for (const s of p.sightings || []) per[s.account] = (per[s.account] || 0) + 1;
+    const list = Object.entries(per).sort((a, b) => b[1] - a[1]);
+    if (list.length < 2) return "";
+    return '<div class="tk-sub">Met by</div><div class="tk-accts">' +
+      list.map(([a, n]) => "<span>" + esc(a) + " <small>" + plural(n, "sighting") + "</small></span>").join("") + "</div>";
+  }
+
+  function actionsHtml(p) {
+    const tag = p.tag ? p.tag.tag : "";
+    const name = encodeURIComponent(p.username);
+    return '<div class="tk-actions">' +
+      '<button class="tk-btn tk-friendly' + (tag === "friendly" ? " on" : "") + '" data-tag="friendly"' + (tagBusy ? " disabled" : "") + ">Friendly</button>" +
+      '<button class="tk-btn tk-enemy' + (tag === "enemy" ? " on" : "") + '" data-tag="enemy"' + (tagBusy ? " disabled" : "") + ">Enemy</button>" +
+      (tag ? '<button class="tk-btn" data-tag=""' + (tagBusy ? " disabled" : "") + ">Untag</button>" : "") +
+      '<button class="tk-btn" data-find="1" title="Open the Player Finder for them">Find</button>' +
+      '<a class="tk-btn" href="https://sky.shiiyu.moe/stats/' + name + '" target="_blank" rel="noopener noreferrer">SkyCrypt</a>' +
+      '<a class="tk-btn" href="https://namemc.com/profile/' + name + '" target="_blank" rel="noopener noreferrer">NameMC</a>' +
+      "</div>" + (tagError ? '<div class="tk-error">' + esc(tagError) + "</div>" : "");
+  }
+
+  // Each meeting: when, how long, where, which account, and every sighting in it (folded away).
+  function meetingsHtml(p) {
+    const list = p.meeting_list || [];
+    if (!list.length) return '<div class="empty">Not met in a lobby yet' + (p.party_times ? ", only in a party." : ".") + "</div>";
+    return '<ul class="tk-meetings">' + list.map(m => {
+      const long = duration(m.start, m.end);
+      const day = fmtShort(m.start).replace(/,? \d+:\d+ [AP]M$/, "");
+      return '<li><details><summary>' +
+        '<span class="tk-mday" title="' + esc(fmtFull(m.start)) + '">' + esc(day) + "</span>" +
+        '<span class="tk-mtime">' + esc(fmtTime(m.start)) + (long ? "–" + esc(fmtTime(m.end)) : "") + "</span>" +
+        '<span class="tk-mwhere">' + m.worlds.map(w => dot(w) + esc(w)).join(", ") + "</span>" +
+        '<span class="tk-mcount">' + (m.count > 1 ? "×" + m.count : "") + "</span>" +
+        "</summary>" +
+        '<div class="tk-mmore">' + esc(m.accounts.join(", ")) + (long ? " · " + esc(long) : "") + " · " + plural(m.count, "sighting") +
+        "<ol>" + m.sightings.map(s => "<li>" + esc(fmtTime(s.seen_at)) + " " + dot(s.world) + esc(s.world) +
+          (m.accounts.length > 1 ? " <small>" + esc(s.account) + "</small>" : "") + "</li>").join("") + "</ol></div>" +
+        "</details></li>";
+    }).join("") + "</ul>";
+  }
+
+  function partiesHtml(p) {
+    if (!p.party_times) return '<div class="empty">Never in a party with you.</div>';
+    const accounts = new Set((p.parties || []).map(x => x.account));
+    return '<ul class="tk-list">' + p.parties.map(x =>
+      "<li>" + agoHtml(x.joined_at) + ' <small>' + esc(fmtShort(x.joined_at)) + "</small>" +
+      (accounts.size > 1 ? "<small>" + esc(x.account) + "</small>" : "") + "</li>").join("") + "</ul>";
+  }
+
+  // Tags (or untags) the open player, then reloads their panel, the list and the cards.
+  async function setTag(tag) {
+    if (!profile || tagBusy) return;
+    const p = profile;
+    tagBusy = true; tagError = "";
+    renderProfile();
+    try {
+      let res;
+      if (tag) {
+        res = await fetch("/tracker/frienemies", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: p.username, tag, notes: p.tag ? p.tag.notes : "" })
+        });
+      } else {
+        res = await fetch("/tracker/frienemies/" + encodeURIComponent(p.id), { method: "DELETE" });
+      }
+      if (!res.ok) throw new Error("The website could not save that (HTTP " + res.status + ").");
+      document.dispatchEvent(new CustomEvent("frienemies-changed"));
+    } catch (e) {
+      tagError = e.message;
     }
-    const accounts = new Set((p.sightings || []).map(s => s.account));
-    return statusHtml(p) + discordHtml(p) + '<div class="tk-counter"><b>' + p.times_seen + "</b><span>" + (p.times_seen === 1 ? "time" : "times") + " met</span></div>" +
-      (filtered ? '<div class="tk-note">' + p.matching + " of them in " + esc(filterWorlds.join(", ")) + "</div>" : "") +
-      '<dl class="tk-kv">' +
-        "<dt>First seen</dt><dd>" + esc(fmtFull(p.first_seen)) + "</dd>" +
-        "<dt>Last seen</dt><dd>" + esc(fmtFull(p.last_seen)) + "</dd>" +
-        "<dt>Partied with you</dt><dd" + (p.party_times ? ' class="tk-partyrow"' : "") + ">" +
-          (p.party_times ? "Yes, " + p.party_times + (p.party_times === 1 ? " time" : " times") : "Never") + "</dd>" +
-      "</dl>" +
-      (p.party_times
-        ? '<div class="tk-sub">Every time you partied (' + p.party_times + ')</div><ul class="tk-list">' +
-          p.parties.map(x => "<li>" + esc(fmtFull(x.joined_at)) + (accounts.size > 1 ? "<small>" + esc(x.account) + "</small>" : "") + "</li>").join("") + "</ul>"
-        : "") +
-      worldChips(p.by_world) +
-      '<div class="tk-sub">' + (filtered
-        ? "Encounters in " + esc(filterWorlds.join(", ")) + " (" + p.matching + " of " + p.times_seen + ")"
-        : "Every time you met them (" + p.sightings.length + ")") + "</div>" +
-      (p.sightings.length
-        ? '<ul class="tk-list">' + p.sightings.map(s =>
-            "<li>" + esc(fmtFull(s.seen_at)) +
-            '<small class="tk-w"><i style="background:' + esc(worldColor(s.world)) + '"></i>' + esc(s.world) + "</small>" +
-            (accounts.size > 1 ? "<small>" + esc(s.account) + "</small>" : "") + "</li>").join("") + "</ul>"
-        : '<div class="empty">' + (filtered ? "Not met in the chosen worlds." : "Not met in a lobby yet, only in a party.") + "</div>");
+    tagBusy = false;
+    await showPlayer(p.username);
+    scheduleRefresh();
+  }
+
+  function findPlayer(name) {
+    if (window.showTab) window.showTab("finder");
+    const box = $("fdName"), go = $("fdSearch");
+    if (box && !box.disabled) { box.value = name; if (go) go.click(); }
   }
 
   // ------------------------------------------------------------ Hypixel status
 
   // Asks the website (never Hypixel directly, and the key never reaches the page) whether a player is
-  // online. Called only from showPlayer for a click, and from the Refresh button.
+  // online. Called only from showPlayer for a click, and from the refresh button.
   async function loadStatus(name, forced) {
     const lower = name.toLowerCase();
     const kept = statusKept.get(lower);
@@ -1220,10 +849,63 @@ try {
     refreshStatusBox();
   }
 
+  // The badge text and its look for an answer.
+  function statusBadge(d) {
+    if (d.state === "online" && d.skyblock) {
+      // A world the website does not know yet is shown from its raw name, for example "foraging_2" as "Foraging 2".
+      const raw = d.mode ? String(d.mode).replace(/_/g, " ").replace(/\b[a-z]/g, c => c.toUpperCase()) : "";
+      return { cls: "online", text: "Online · SkyBlock: " + (d.world || raw || "world unknown") };
+    }
+    if (d.state === "online") return { cls: "online", text: "Online · " + (d.game || "another game") };
+    return { cls: "offline", text: "Offline or hidden",
+             note: "Hypixel reports a player who hides their status as offline, so this may not be true." };
+  }
+
+  // Hypixel's answer as one small line. Without a working key it stays quiet: your own last-seen line above still says
+  // where they were.
+  function statusHtml(p) {
+    const s = statusView;
+    if (!s || s.name.toLowerCase() !== p.username.toLowerCase()) return "";
+    let badge;
+    if (s.data) {
+      const b = statusBadge(s.data);
+      badge = '<span class="tk-badge ' + b.cls + '"' + (b.note ? ' title="' + esc(b.note) + '"' : "") + ">" + esc(b.text) + "</span>";
+    } else if (s.loading) {
+      badge = '<span class="tk-badge loading">Checking Hypixel…</span>';
+    } else {
+      badge = '<span class="tk-badge off" title="' + esc(s.failure || "No answer.") + '">Hypixel status off</span>';
+    }
+    return '<span class="tk-status" id="tkStatusBox">' + badge +
+      '<span id="tkStatusAge" class="tk-sage"></span>' +
+      '<button class="tk-icon" id="tkStatusRefresh" data-status-refresh="1" title="Ask Hypixel again" aria-label="Refresh status">↻</button></span>';
+  }
+
+  // Redraws only the status line, so the rest of the panel (and its scroll position) is left alone.
+  function refreshStatusBox() {
+    if (!profile) return;
+    const box = $("tkStatusBox");
+    if (box) box.outerHTML = statusHtml(profile);
+    else renderProfile();               // the first time, there is no line yet
+    tickStatusClock();
+  }
+
+  // "12s ago" and the refresh cooldown. Only changes text; it never asks anyone for anything.
+  function tickStatusClock() {
+    const age = $("tkStatusAge"), button = $("tkStatusRefresh");
+    if (!age || !button || !statusView) return;
+    const s = statusView;
+    if (s.loading || !s.receivedAt || !s.data) { age.textContent = ""; button.disabled = !!s.loading; return; }
+
+    const checkedAt = s.receivedAt - ((s.data && s.data.age_seconds) || 0) * 1000;
+    const seconds = Math.max(0, Math.round((Date.now() - checkedAt) / 1000));
+    age.textContent = seconds < 2 ? "now" : seconds < 90 ? seconds + "s ago" : Math.round(seconds / 60) + "m ago";
+    button.disabled = Date.now() - s.receivedAt < REFRESH_COOLDOWN_MS;
+  }
+  setInterval(tickStatusClock, 1000);
+
   // ------------------------------------------------------------ linked Discord
 
-  // Asks the website (which asks Hypixel, the same place SkyCrypt reads it from) for the Discord a player linked.
-  // Only called when you click a player. An answer is kept for an hour.
+  // Asks the website for the Discord a player linked. Only called when you click a player. An answer is kept for an hour.
   async function loadDiscord(name) {
     const lower = name.toLowerCase();
     const kept = discordKept.get(lower);
@@ -1253,105 +935,26 @@ try {
     refreshDiscordBox();
   }
 
-  // One line under the status card: their Discord, or that they have none linked.
+  // Their Discord, only when one is linked. Nothing at all otherwise, so it never takes room.
   function discordHtml(p) {
     const d = discordView;
-    if (!d || d.name.toLowerCase() !== p.username.toLowerCase()) return "";
-    let value;
-    if (d.loading) value = '<span class="tk-dim">checking…</span>';
-    else if (d.data && d.data.state === "linked") value = '<b class="tk-discord">' + esc(d.data.discord) + "</b>";
-    else if (d.data) value = '<span class="tk-dim" title="Hypixel gives no way to tell these apart">None linked (or hidden)</span>';
-    else value = '<span class="tk-dim">Unavailable. ' + esc(d.failure || "") + "</span>";
-    return '<dl class="tk-kv tk-dline" id="tkDiscordBox"><dt>Discord</dt><dd>' + value + "</dd></dl>";
+    const linked = d && d.name.toLowerCase() === p.username.toLowerCase() && d.data && d.data.state === "linked";
+    return '<span id="tkDiscordBox">' + (linked ? '<span class="tk-discord" title="Linked Discord">Discord: <b>' + esc(d.data.discord) + "</b></span>" : "") + "</span>";
   }
 
-  // Redraws only that line, so the rest of the panel is left alone.
   function refreshDiscordBox() {
-    if (!profile || playerTab !== "details") return;
+    if (!profile) return;
     const box = $("tkDiscordBox");
-    if (box) box.outerHTML = discordHtml(profile.p);
-    else renderProfile();               // the first time, there is no line yet
+    if (box) box.outerHTML = discordHtml(profile);
   }
 
-  // The badge text and its look for an answer.
-  function statusBadge(d) {
-    if (d.state === "online" && d.skyblock) {
-      // A world the website does not know yet is shown from its raw name, for example "foraging_2" as "Foraging 2".
-      const raw = d.mode ? String(d.mode).replace(/_/g, " ").replace(/\b[a-z]/g, c => c.toUpperCase()) : "";
-      return { cls: "online", text: "Online, SkyBlock: " + (d.world || raw || "world unknown") };
-    }
-    if (d.state === "online") return { cls: "online", text: "Online, other game", note: d.game || "" };
-    return { cls: "offline", text: "Offline or status hidden",
-             note: "Hypixel reports a player who hides their status as offline, so this may not be true. Your own last-seen record is next to it." };
-  }
-
-  // "Sep 21, 2026, 12:04 PM EDT in The End" from your own database.
-  function lastSeenText(p) {
-    if (p.unknown) return "";
-    const s = (p.sightings || [])[0];
-    if (s) return fmtFull(s.seen_at) + " in " + s.world;
-    if (p.times_seen) return fmtFull(p.last_seen);
-    return "";
-  }
-
-  function statusHtml(p) {
-    const s = statusView;
-    if (!s || s.name.toLowerCase() !== p.username.toLowerCase()) return "";
-
-    let badge = "", note = "";
-    if (s.data) {
-      const b = statusBadge(s.data);
-      badge = '<span class="tk-badge ' + b.cls + '">' + esc(b.text) + "</span>";
-      note = b.note ? '<div class="tk-snote">' + esc(b.note) + "</div>" : "";
-      if (s.failure) note += '<div class="tk-snote warn">Showing an older answer. ' + esc(s.failure) + "</div>";
-    } else if (s.loading) {
-      badge = '<span class="tk-badge loading">Checking status…</span>';
-    } else {
-      badge = '<span class="tk-badge problem">Status unavailable</span>';
-      note = '<div class="tk-snote warn">' + esc(s.failure || "No answer.") + "</div>";
-    }
-
-    const seen = lastSeenText(p);
-    return '<div class="tk-status" id="tkStatusBox">' +
-      '<div class="tk-srow">' + badge +
-        '<span class="tk-slast">' + (seen ? "Last seen " + esc(seen) : p.unknown ? "Not in your database" : "Not met in a lobby yet") + "</span></div>" + note +
-      '<div class="tk-srow tk-sfoot"><span id="tkStatusAge" class="tk-sage"></span>' +
-        '<button class="tk-btn" id="tkStatusRefresh" data-status-refresh="1">Refresh</button></div></div>';
-  }
-
-  // Redraws only the card, so the rest of the panel (and its scroll position) is left alone.
-  function refreshStatusBox() {
-    if (!profile || playerTab !== "details") return;
-    const box = $("tkStatusBox");
-    if (box) box.outerHTML = statusHtml(profile.p);
-    else renderProfile();               // the first time, there is no card yet
-    tickStatusClock();
-  }
-
-  // "checked 12 seconds ago" and the Refresh countdown. Only changes text; it never asks anyone for anything.
-  function tickStatusClock() {
-    const age = $("tkStatusAge"), button = $("tkStatusRefresh");
-    if (!age || !button || !statusView) return;
-    const s = statusView;
-
-    if (s.loading) { age.textContent = "checking…"; button.disabled = true; button.textContent = "Refresh"; return; }
-    if (!s.receivedAt) { age.textContent = ""; button.disabled = false; button.textContent = "Try again"; return; }
-
-    const checkedAt = s.receivedAt - ((s.data && s.data.age_seconds) || 0) * 1000;
-    const seconds = Math.max(0, Math.round((Date.now() - checkedAt) / 1000));
-    age.textContent = "checked " + (seconds < 2 ? "just now" : seconds < 90 ? seconds + " seconds ago" : Math.round(seconds / 60) + " minutes ago");
-
-    const wait = Math.ceil((REFRESH_COOLDOWN_MS - (Date.now() - s.receivedAt)) / 1000);
-    button.disabled = wait > 0;
-    button.textContent = wait > 0 ? "Refresh (" + wait + "s)" : "Refresh";
-  }
-  setInterval(tickStatusClock, 1000);
+  // ---------------------------------------------------------------------- chat
 
   // What they said, newest first: the time, the channel if it was not public chat, and the message.
   function chatHtml(p) {
     const chats = p.chats || [];
     if (!chats.length) {
-      return '<div class="empty">No chat from ' + esc(p.username) + " yet. Whatever they say while the scanner is on and you are in the same lobby shows up here.</div>";
+      return '<div class="empty">No chat from ' + esc(p.username) + " yet. What they say while you are in the same lobby shows up here.</div>";
     }
     return chatList(chats, p.chat_count);
   }
@@ -1359,27 +962,26 @@ try {
   // A count line and the messages, newest first. Used for a player's chat and for your own.
   function chatList(chats, total) {
     const accounts = new Set(chats.map(c => c.account).filter(Boolean));
-    return '<div class="tk-sub">' + total + (total === 1 ? " message" : " messages") +
+    return '<div class="tk-sub">' + plural(total, "message") +
              (total > chats.length ? " (newest " + chats.length + " shown)" : "") + "</div>" +
       '<ul class="tk-chat">' + chats.map(c =>
         '<li><div class="tk-chead"><span class="tk-ctime" title="' + esc(fmtFull(c.said_at)) + '">' + esc(fmtShort(c.said_at)) + "</span>" +
         (c.channel !== "Public" ? '<span class="tk-cchan ch-' + esc(c.channel.replace(/[^A-Za-z]/g, "")) + '">' + esc(c.channel) + "</span>" : "") +
-        (c.world && c.world !== "Unknown" ? '<small class="tk-w"><i style="background:' + esc(worldColor(c.world)) + '"></i>' + esc(c.world) + "</small>" : "") +
+        (c.world && c.world !== "Unknown" ? '<small class="tk-w">' + dot(c.world) + esc(c.world) + "</small>" : "") +
         (accounts.size > 1 ? "<small>" + esc(c.account) + "</small>" : "") + "</div>" +
         '<div class="tk-cmsg">' + esc(c.message) + "</div></li>").join("") + "</ul>";
   }
 
   // A player just said something. If their panel is open it gains the message straight away.
   function applyChat(ev) {
-    if (!profile || profile.p.username.toLowerCase() !== String(ev.username).toLowerCase()) return;
-    const me = nodes.get("me");
-    profile.p.chats = [{ said_at: ev.said_at, channel: ev.channel, world: ev.world, message: ev.message, account: ev.account || (me ? me.label : "") }]
-      .concat(profile.p.chats || []).slice(0, 300);
-    profile.p.chat_count = (profile.p.chat_count || 0) + 1;
+    if (!profile || profile.username.toLowerCase() !== String(ev.username).toLowerCase()) return;
+    profile.chats = [{ said_at: ev.said_at, channel: ev.channel, world: ev.world, message: ev.message, account: ev.account || ownerLabel }]
+      .concat(profile.chats || []).slice(0, 300);
+    profile.chat_count = (profile.chat_count || 0) + 1;
     renderProfile();
   }
 
-  // What you said, from the website. Shown on the middle node.
+  // What you said, from the website. Shown on the account panel.
   async function loadMyChat() {
     const asking = owner;
     if (!asking) return;
@@ -1387,7 +989,7 @@ try {
       const data = await getJson("/tracker/mychat?owner=" + encodeURIComponent(asking));
       if (asking !== owner) return;
       myChat = { count: data.count, chats: data.chats };
-      if (panelIsMe) showMe();
+      if (!profile && !profileName) showMe();
     } catch (e) { /* keep what is shown */ }
   }
 
@@ -1397,120 +999,46 @@ try {
     if (myChat.chats.some(c => c.said_at === ev.said_at && c.message === ev.message)) return;
     myChat.chats = [{ said_at: ev.said_at, channel: ev.channel, world: ev.world, message: ev.message, account: ev.account }].concat(myChat.chats).slice(0, 300);
     myChat.count++;
-    if (panelIsMe) showMe();
+    if (!profile && !profileName) showMe();
   }
 
   function myChatHtml() {
     if (!myChat) return '<div class="empty">Loading…</div>';
-    if (!myChat.count) return '<div class="empty">Nothing you said has been recorded yet. What you say in chat while the scanner is on shows up here.</div>';
+    if (!myChat.count) return '<div class="empty">Nothing you said has been recorded yet. What you say in the game shows up here.</div>';
     return chatList(myChat.chats, myChat.count);
   }
 
-  // A world: how many players, and who has also been in another world.
-  function showWorld(id) {
-    const w = nodes.get(id);
-    if (!w) return;
-    detailTicket++;
-    profileName = null;
-    profile = null;
-    panelIsMe = false;
+  // ------------------------------------------------------------ account panel
 
-    const listed = worldsList.find(x => x.world.toLowerCase() === w.world.toLowerCase());
-    const players = edges.get({ filter: e => e.from === id })
-      .map(e => nodes.get(e.to)).filter(Boolean)
-      .sort((a, b) => a.label.toLowerCase().localeCompare(b.label.toLowerCase()));
-    const shared = players.filter(p => p.worlds > 1);
-
-    // A chip for each player. The tooltip lists the other worlds a shared player was met in.
-    const chip = (p) => {
-      const others = [...(playerWorlds.get(p.id) || [])].filter(x => x !== id).map(x => (nodes.get(x) || {}).world).filter(Boolean);
-      return '<button class="tk-chip' + (partyGlow && p.party > 0 ? " party" : "") + '" data-node="' + esc(p.id) + '" data-player="' + esc(p.label) + '"' +
-             (others.length ? ' title="Also in ' + esc(others.join(", ")) + '"' : "") + ">" + esc(p.label) + "</button>";
-    };
-
-    $("tkDetailsBody").innerHTML =
-      '<div class="tk-name">World</div>' +
-      '<dl class="tk-kv"><dt>World</dt><dd><span class="tk-w"><i style="background:' + esc(worldColor(w.world)) + '"></i>' + esc(w.world) + "</span></dd>" +
-      "<dt>Players met</dt><dd>" + (listed ? listed.players : w.players) + "</dd>" +
-      "<dt>Lobby visits</dt><dd>" + (listed ? listed.visits : w.visits) + "</dd></dl>" +
-      (shared.length
-        ? '<div class="tk-sub">Also seen in another world (' + shared.length + ')</div><div class="tk-chips">' + shared.map(chip).join("") + "</div>"
-        : "") +
-      '<div class="tk-sub">Players (' + players.length + ")</div>" +
-      '<div class="tk-chips">' + players.map(chip).join("") + "</div>" +
-      '<div class="tk-sub">Clear</div><button class="tk-btn tk-danger" data-clear-world="' + esc(w.world) + '">Clear this world…</button>';
-  }
-
-  // The Parties branch: everyone you have partied with, and how many times.
-  function showParty() {
-    const branch = nodes.get("party");
-    if (!branch) return;
-    detailTicket++;
-    profileName = null;
-    profile = null;
-    panelIsMe = false;
-
-    const players = edges.get({ filter: e => e.from === "party" })
-      .map(e => nodes.get(e.to)).filter(Boolean)
-      .sort((a, b) => (b.party - a.party) || a.label.toLowerCase().localeCompare(b.label.toLowerCase()));
-
-    $("tkDetailsBody").innerHTML =
-      '<div class="tk-name">Parties</div>' +
-      '<dl class="tk-kv"><dt>Players partied with</dt><dd>' + (partyPlayers || players.length) + "</dd></dl>" +
-      '<div class="tk-sub">Players (' + players.length + ")</div>" +
-      '<div class="tk-chips">' + players.map(p =>
-        '<button class="tk-chip' + (partyGlow ? " party" : "") + '" data-node="' + esc(p.id) + '" data-player="' + esc(p.label) + '">' +
-        esc(p.label) + (p.party > 1 ? " ×" + p.party : "") + "</button>").join("") + "</div>";
-  }
-
+  // The panel when no player is open: the account at a glance, and what you said.
   function showMe() {
     detailTicket++;
     profileName = null;
     profile = null;
-    panelIsMe = true;
-    const worlds = nodes.get({ filter: n => n.type === "world" }).length;
-    const players = nodes.get({ filter: n => n.type === "player" }).length;
-    const shared = nodes.get({ filter: n => n.type === "player" && n.worlds > 1 }).length;
-    const me = nodes.get("me");
+    markRow();
     const tab = (id, label) => '<button class="tk-tab' + (meTab === id ? " on" : "") + '" data-metab="' + id + '">' + label + "</button>";
-    const summary = meTab !== "chat";
+    const o = overview;
+    const t = o ? o.tiers : {};
+    const busiest = o && o.worlds.length ? o.worlds.slice().sort((a, b) => b.visits - a.visits)[0] : null;
+    const summary =
+      '<div class="tk-stats4">' +
+        '<div class="tk-stat"><b>' + num(o && o.total_players) + "</b><span>players met</span></div>" +
+        '<div class="tk-stat"><b>' + num(t.regular) + "</b><span>regulars" + (world ? " here" : "") + "</span></div>" +
+        '<div class="tk-stat"><b>' + num(o && o.party_players) + "</b><span>partied with</span></div>" +
+        '<div class="tk-stat"><b>' + num(o && o.worlds.length) + "</b><span>worlds</span></div></div>" +
+      (busiest ? '<div class="tk-hint">You spend the most lobby visits in ' + dot(busiest.world) + "<b>" + esc(busiest.world) + "</b> (" + num(busiest.visits) + ").</div>" : "") +
+      '<div class="tk-hint">Click a player in the list, or search a name, to see every meeting, their chat and their status. ' +
+      "Sightings less than 4 hours after a meeting starts count as one meeting.</div>";
     $("tkDetailsBody").innerHTML =
-      '<div class="tk-name">' + esc(me ? me.label : "You") + "</div>" +
-      '<div class="tk-tabs">' + tab("summary", "Summary") + tab("chat", "My chat" + (myChat && myChat.count ? " <small>" + myChat.count + "</small>" : "")) + "</div>" +
-      (summary ? '<dl class="tk-kv"><dt>Worlds shown</dt><dd>' + worlds + "</dd><dt>Players shown</dt><dd>" + players +
-      "</dd><dt>In more than one world</dt><dd>" + shared + "</dd><dt>Partied with</dt><dd>" + partyPlayers + "</dd></dl>" +
-      '<div class="empty">Click a world to see who was there, or a player to see every time you met them. Players with a pink ring have been in more than one world.</div>' : myChatHtml());
-  }
-
-  function highlight(nodeId) {
-    ensureNetwork();
-    if (!network) return;
-    if (nodes.get(nodeId)) {
-      network.selectNodes([nodeId]);
-      network.focusOn(nodeId, { scale: 1.3, animation: { duration: 500 } });
-      $("tkNote").textContent = "";
-    } else {
-      network.unselectAll();
-      $("tkNote").textContent = hasMore
-        ? "That player is not in the part of the graph that is loaded. Use Load more players."
-        : (filterWorlds.length ? "That player is not in the chosen worlds." : "");
-    }
-  }
-
-  function onGraphClick(params) {
-    if (!params.nodes.length) return;      // a click on empty space: the graph deselects, so the bubble shrinks back
-    const node = nodes.get(params.nodes[0]);
-    if (!node) return;
-    if (node.type === "player") showPlayer(node.label, node.id, true);
-    else if (node.type === "world") showWorld(node.id);
-    else if (node.type === "party") showParty();
-    else showMe();
+      '<div class="tk-name">' + esc(ownerLabel || "You") + "</div>" +
+      '<div class="tk-tabs">' + tab("summary", "Summary") + tab("chat", "My chat" + (myChat && myChat.count ? " <small>" + num(myChat.count) + "</small>" : "")) + "</div>" +
+      (meTab === "chat" ? myChatHtml() : summary);
   }
 
   // Opens the tracker tab and shows a player. Used by alerts.
   function openPlayer(username) {
     if (window.showTab) window.showTab("tracker");
-    showPlayer(username, undefined, true);
+    showPlayer(username, true);
   }
 
   // ------------------------------------------------------------------------ search
@@ -1536,14 +1064,13 @@ try {
       : "";
 
     if (!list.length) {
-      suggestBox.innerHTML = (lookup ? "" : '<div class="tk-sg-empty">No player matches "' + esc(query) + '"' +
-        (filterWorlds.length ? " in the chosen worlds" : "") + ".</div>") + lookupRow;
+      suggestBox.innerHTML = (lookup ? "" : '<div class="tk-sg-empty">No player matches "' + esc(query) + '".</div>') + lookupRow;
     } else {
       suggestBox.innerHTML = list.map((p, i) =>
         '<button class="tk-sg" data-i="' + i + '">' + "<span>" + esc(p.username) + "</span>" +
         "<small>" + (p.party_times ? '<span class="tk-sgparty">partied ' + p.party_times + "× · </span>" : "") +
-        (p.chat_count ? p.chat_count + (p.chat_count === 1 ? " message · " : " messages · ") : "") +
-        "met " + (filterWorlds.length ? p.matching : p.times_seen) + "× · last " + esc(fmtShort(p.last_seen)) + "</small></button>").join("") + lookupRow;
+        (p.chat_count ? plural(p.chat_count, "message") + " · " : "") +
+        "met " + p.meetings + "× · " + esc(ago(p.last_seen)) + "</small></button>").join("") + lookupRow;
     }
     suggestBox.hidden = false;
   }
@@ -1553,7 +1080,7 @@ try {
     const ticket = ++suggestTicket;
     if (!query) { hideSuggest(); return; }
     try {
-      const data = await getJson("/tracker/search?q=" + encodeURIComponent(query) + "&sightings=false&limit=8" + worldParams() + ownerParam());
+      const data = await getJson("/tracker/search?q=" + encodeURIComponent(query) + "&sightings=false&limit=8" + ownerParam());
       if (ticket === suggestTicket) renderSuggest(data.players, query);
     } catch (e) {
       if (ticket === suggestTicket) hideSuggest();
@@ -1563,8 +1090,7 @@ try {
   function choose(p) {
     input.value = p.username;
     hideSuggest();
-    if (p.unknown) showPlayer(p.username, undefined, true);        // not in the database: the profile says so
-    else showPlayer(p.username, "p" + p.id, true);
+    showPlayer(p.username, true);
   }
 
   function setActive(i) {
@@ -1597,7 +1123,7 @@ try {
   let clearChoice = "";         // the world to clear, or "" for every world
   let clearError = "", clearNote = "", clearTimer = null;
 
-  function openClear(world) {
+  function openClear() {
     if (owner === "all") {                                    // clearing is one account at a time, never everything at once
       clearNote = "Choose one account first: data is only cleared for one account at a time.";
       clearStep = 0;
@@ -1605,7 +1131,7 @@ try {
       return;
     }
     clearStep = 1;
-    clearChoice = world || (filterWorlds.length === 1 ? filterWorlds[0] : "");
+    clearChoice = world;
     clearError = clearNote = "";
     renderClear();
     clearBox.scrollIntoView({ block: "nearest" });
@@ -1619,13 +1145,13 @@ try {
 
   function renderClear() {
     clearBox.hidden = clearStep === 0 && !clearNote;
-    const me = nodes.get("me");
-    const who = esc(me ? me.label : "this account");
+    const who = esc(ownerLabel || "this account");
+    const worlds = overview ? overview.worlds : [];
 
     if (clearStep === 0) {
       clearBox.innerHTML = '<span class="tk-note">' + esc(clearNote) + "</span>";
     } else if (clearStep === 1) {
-      const options = ['<option value="">All worlds</option>'].concat(worldsList.map(w =>
+      const options = ['<option value="">All worlds</option>'].concat(worlds.map(w =>
         '<option value="' + esc(w.world) + '"' + (w.world.toLowerCase() === clearChoice.toLowerCase() ? " selected" : "") + ">" +
         esc(w.world) + " (" + w.players + " players)</option>"));
       clearBox.innerHTML =
@@ -1635,7 +1161,7 @@ try {
         '<button class="tk-btn" data-clear="cancel">Cancel</button></div>' +
         (clearError ? '<div class="tk-error">' + esc(clearError) + "</div>" : "");
     } else {
-      const listed = worldsList.find(w => w.world.toLowerCase() === clearChoice.toLowerCase());
+      const listed = worlds.find(w => w.world.toLowerCase() === clearChoice.toLowerCase());
       const what = clearChoice
         ? "every player met in " + esc(clearChoice) + (listed ? " (" + listed.players + " players, " + listed.visits + " lobby visits)" : "")
         : "all players and lobby visits in every world";
@@ -1647,33 +1173,27 @@ try {
   }
 
   async function doClear() {
-    const asking = owner, world = clearChoice;
+    const asking = owner, target = clearChoice;
     clearBox.querySelectorAll("button").forEach(b => { b.disabled = true; });
 
     try {
       const res = await fetch("/tracker/clear", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(world ? { owner: asking, world } : { owner: asking })
+        body: JSON.stringify(target ? { owner: asking, world: target } : { owner: asking })
       });
       if (res.status === 403) throw new Error("Clearing only works on the PC that runs the website. Open http://127.0.0.1:8000 on that PC.");
       if (!res.ok) throw new Error("The website could not clear the data (HTTP " + res.status + ").");
       const done = await res.json();
 
       clearStep = 0;
-      clearNote = "Deleted " + done.players_removed + (done.players_removed === 1 ? " player" : " players") +
-                  " and " + done.visits_removed + (done.visits_removed === 1 ? " lobby visit" : " lobby visits") +
-                  (world ? " in " + world : "") + ".";
+      clearNote = "Deleted " + plural(done.players_removed, "player") + " and " + plural(done.visits_removed, "lobby visit") +
+                  (target ? " in " + target : "") + ".";
       clearTimeout(clearTimer);
       clearTimer = setTimeout(() => { clearNote = ""; if (clearStep === 0) renderClear(); }, 8000);
 
-      // A chosen world that no longer exists must not stay in the filter.
-      filterWorlds = world ? filterWorlds.filter(w => w.toLowerCase() !== world.toLowerCase()) : [];
-      saveFilter();
-      if (asking === owner) {
-        renderWorldBar();
-        await Promise.all([reloadGraph(), refreshWorlds()]);
-        showMe();
-      }
+      // A chosen world that no longer exists must not stay chosen.
+      if (!target || target.toLowerCase() === world.toLowerCase()) { world = ""; store(KEY_WORLD, ""); }
+      if (asking === owner) { rows = []; await refreshAll(); showMe(); }
     } catch (e) {
       clearStep = 1;
       clearError = e.message;
@@ -1697,30 +1217,43 @@ try {
 
   // ----------------------------------------------------------------- page wiring
 
-  // The chips above the graph and the chips in a player profile are the same filter.
-  for (const box of [$("tkWorlds"), $("tkDetailsBody")]) {
-    box.addEventListener("click", (e) => {
-      const chip = e.target.closest(".tk-wchip");
-      if (!chip) return;
-      if (chip.dataset.party) toggleParty();
-      else toggleWorld(chip.dataset.world);
-    });
-  }
+  $("tkMap").addEventListener("click", (e) => {
+    const tile = e.target.closest(".tk-tile");
+    if (tile) chooseWorld(tile.dataset.world);
+  });
+  $("tkScope").addEventListener("click", (e) => {
+    if (e.target.closest("button[data-world]")) chooseWorld("");
+  });
+  $("tkTiers").addEventListener("click", (e) => {
+    const card = e.target.closest(".tk-tier");
+    if (card) chooseTier(card.dataset.tier);
+  });
+  $("tkRows").addEventListener("click", (e) => {
+    const row = e.target.closest(".tk-row");
+    if (row) showPlayer(row.dataset.player, true);
+  });
+  $("tkSort").addEventListener("change", () => {
+    sort = $("tkSort").value;
+    store(KEY_SORT, sort);
+    rows = [];
+    loadList(false);
+  });
+  $("tkMore").addEventListener("click", () => loadList(true));
+
   $("tkDetailsBody").addEventListener("click", (e) => {
-    const refresh = e.target.closest("button[data-status-refresh]");
-    if (refresh) { if (profile) loadStatus(profile.p.username, true); return; }
+    if (e.target.closest("button[data-status-refresh]")) { if (profile) loadStatus(profile.username, true); return; }
     const tab = e.target.closest("button[data-ptab]");
     if (tab) { playerTab = tab.dataset.ptab; renderProfile(); return; }
     const meButton = e.target.closest("button[data-metab]");
     if (meButton) { meTab = meButton.dataset.metab; showMe(); return; }
-    const clearing = e.target.closest("button[data-clear-world]");
-    if (clearing) { openClear(clearing.dataset.clearWorld); return; }
-    const chip = e.target.closest(".tk-chip");
-    if (chip) showPlayer(chip.dataset.player, chip.dataset.node, true);
+    if (e.target.closest("button[data-close]")) { showMe(); return; }
+    const tagButton = e.target.closest("button[data-tag]");
+    if (tagButton) { setTag(tagButton.dataset.tag); return; }
+    if (e.target.closest("button[data-find]")) { if (profile) findPlayer(profile.username); return; }
   });
   $("tkAlertLog").addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-player]");
-    if (btn) showPlayer(btn.dataset.player, undefined, true);
+    if (btn) showPlayer(btn.dataset.player, true);
   });
   $("tkClearLog").addEventListener("click", () => { alertLog = []; store(KEY_LOG, "[]"); renderAlertLog(); });
 
@@ -1730,142 +1263,53 @@ try {
     if (!$("tkAlerts").checked) { alertQueue = []; }
   });
 
-  $("tkLinks").addEventListener("click", (e) => {
-    const b = e.target.closest(".tk-link");
-    if (!b) return;
-    if (b.dataset.all) showConnections(chosenWorldNodes().map(w => w.id));
-    else showConnections([b.dataset.a, b.dataset.b]);
-  });
-  $("tkFit").addEventListener("click", () => { ensureNetwork(); if (network) network.fit({ animation: true }); });
-  $("tkMore").addEventListener("click", loadMore);
+  let resizeTimer = null;
+  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderMap, 120); });
 
-  function treeUrl(extra) {
-    return "/tracker/tree?owner=" + encodeURIComponent(owner) + "&players=" + PLAYERS_PER_PAGE + (extra || "") + worldParams();
-  }
-
-  async function loadMore() {
-    const ticket = loadTicket;
-    const button = $("tkMore");
-    button.disabled = true;
-    try {
-      const tree = await getJson(treeUrl("&before=" + nextBefore));
-      if (ticket !== loadTicket) return;
-      hasMore = tree.has_more;
-      if (tree.next_before !== null) nextBefore = tree.next_before;
-      addTree(tree, true);
-    } catch (e) {
-      $("tkNote").textContent = "Could not load more players.";
-    } finally {
-      button.disabled = false;
-    }
-  }
-
-  // Loads the most recently met players for the current account and filter, replacing what is drawn.
-  // The live feed carries on underneath it.
-  async function reloadGraph() {
-    const ticket = ++loadTicket;
-    resetGraph();
-    hasMore = false;
-    nextBefore = null;
-    $("tkNote").textContent = "";
-
-    let tree;
-    try {
-      tree = await getJson(treeUrl());
-    } catch (e) {
-      if (ticket === loadTicket) { setLive(false, "offline"); overlay("Could not load the tracker data."); }
-      return null;
-    }
-    if (ticket !== loadTicket) return null;
-
-    hasMore = tree.has_more;
-    nextBefore = tree.next_before;
-    addTree(tree, true);
-    if (network) setTimeout(() => network.fit({ animation: true }), 300);
-    loadRest(ticket);                       // the rest arrive in the background, a page at a time
-    return tree;
-  }
-
-  // The first page is drawn straight away. The remaining players are fetched a page at a time, so
-  // "All worlds" ends up with everyone, not just the newest ones.
-  async function loadRest(ticket) {
-    const count = () => nodes.get({ filter: n => n.type === "player" }).length;
-
-    while (hasMore && ticket === loadTicket && count() < MAX_AUTO_PLAYERS) {
-      $("tkNote").textContent = "Loading the rest of your players… " + count().toLocaleString() +
-                                (totalPlayers ? " of " + totalPlayers.toLocaleString() : "");
-      let tree;
-      try {
-        tree = await getJson(treeUrl("&before=" + nextBefore));
-      } catch (e) {
-        if (ticket === loadTicket) $("tkNote").textContent = "Could not load all players. Use Load more players to try again.";
-        return;
-      }
-      if (ticket !== loadTicket) return;
-
-      hasMore = tree.has_more;
-      if (tree.next_before !== null) nextBefore = tree.next_before;
-      addTree(tree, !hasMore);        // the last page draws right away instead of waiting on the throttle
-      await new Promise(resolve => setTimeout(resolve, 0));      // let the browser draw between pages
-    }
-
-    if (ticket !== loadTicket) return;
-    scheduleLayout(true);             // flush a still-pending throttled layout before fitting to it
-    $("tkNote").textContent = hasMore ? "Showing the " + count().toLocaleString() + " newest players. Use Load more players for the rest." : "";
-    if (network) network.fit({ animation: true });
-  }
-
-  // Follows a different account: its history, its worlds, and a fresh live feed.
   async function loadOwner(account) {
+    const wanted = account.uuid || "all";        // "all": every account together
+    // This tab and the page both ask for the first account when the page opens: the second ask loads nothing again.
+    if (wanted === owner && (ownerState === "loading" || ownerState === "loaded")) { updateScanner(); return; }
     closeStream();
-    pendingEvents = [];
-    owner = account.uuid || "all";               // "all": every account together
-    worldsList = [];
-    totalPlayers = 0;
-    partyPlayers = 0;
+    owner = wanted;
+    ownerLabel = account.uuid ? account.name : "All accounts";
+    ownerState = "loading";
+    overview = null;
+    previews = {};
+    rows = []; rowsTotal = 0;
     lastTotal = null;
     myChat = null;
-    renderTotal();
+    profileName = null; profile = null;
+    renderTotal(0);
     clearStep = 0; clearNote = clearError = "";
     renderClear();
     setLive(false, "loading…");
+    renderMap(); renderScope(); renderTiers(); renderList();
     showMe();
     updateScanner();
-    refreshWorlds();
     loadMyChat();
 
-    const tree = await reloadGraph();
-    if (!tree || (account.uuid || "all") !== owner) return;
-    showMe();
-    startStream(tree.latest_event_id);
+    const data = await refreshAll();
+    if (wanted !== owner) return;
+    if (!data) { ownerState = ""; return; }      // it could not load: choosing the account again tries again
+    ownerState = "loaded";
+    startStream(data.latest_event_id);
   }
 
   // The page tells us when the account changes, and when this tab is shown.
   document.addEventListener("account-selected", (e) => loadOwner(e.detail));
   document.addEventListener("tab-changed", (e) => {
     if (e.detail !== "tracker") return;
-    ensureNetwork();
     updateScanner();
-    if (!network) return;
-    // The canvas has no size while the tab is hidden, so it is fitted once it is shown.
-    setTimeout(() => {
-      network.redraw();
-      if (!fitted && nodes.length > 1) { network.fit(); fitted = true; }
-    }, 50);
+    setTimeout(renderMap, 30);          // the map has no size while the tab is hidden
   });
 
   renderAlertLog();
-  renderWorldBar();
-  renderLegend();
   setInterval(updateScanner, 3000);
   const current = window.currentAccount && window.currentAccount();
   if (current) loadOwner(current);
 
-  // The page may already be on this tab, for example when it was opened at #tracker.
-  if (!$("tabTracker").hidden) document.dispatchEvent(new CustomEvent("tab-changed", { detail: "tracker" }));
-
   // For checking the page from the browser console.
-  window.tracker = { nodes, edges, get network() { return network; }, fmtShort, fmtFull, worldColor,
-                     get filter() { return filterWorlds.slice(); } };
+  window.tracker = { fmtShort, fmtFull, worldColor, get world() { return world; }, get tier() { return tier; } };
 })();
 } catch (e) { console.error("tracker:", e); }

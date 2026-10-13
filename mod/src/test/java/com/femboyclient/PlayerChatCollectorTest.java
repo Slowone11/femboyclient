@@ -19,6 +19,7 @@ class PlayerChatCollectorTest {
 
 	private final List<JsonObject> sent = new ArrayList<>();
 	private boolean allowed;
+	private boolean ownAllowed;
 	private Set<String> lobby;
 	private String world;
 	private PlayerChatCollector collector;
@@ -27,9 +28,10 @@ class PlayerChatCollectorTest {
 	void setUp() {
 		sent.clear();
 		allowed = true;
+		ownAllowed = true;
 		lobby = Set.of("test", "alice", "bob");
 		world = "The End";
-		collector = new PlayerChatCollector(sent::add, () -> allowed, () -> "WeTrollALittle", () -> lobby, () -> world);
+		collector = new PlayerChatCollector(sent::add, () -> allowed, () -> ownAllowed, () -> "WeTrollALittle", () -> lobby, () -> world);
 	}
 
 	private JsonArray messages(int batch) {
@@ -146,69 +148,67 @@ class PlayerChatCollectorTest {
 	}
 
 	@Test
-	void theSameMessageAgainWithinTwoSecondsIsDropped() {
+	void everyRepeatIsKeptHoweverCloseTogether() {
 		Instant t = Instant.parse("2026-09-21T15:00:00Z");
 		collector.handle("[MVP+] TEST: hello there", t);
-		collector.handle("[MVP+] TEST: hello there", t.plusMillis(1900));
-		collector.onDisconnect();
-
-		assertEquals(1, messages(0).size());
-	}
-
-	@Test
-	void theSameMessageAfterTwoSecondsIsKeptAgain() {
-		Instant t = Instant.parse("2026-09-21T15:00:00Z");
-		collector.handle("[MVP+] TEST: hello there", t);
-		collector.handle("[MVP+] TEST: hello there", t.plusMillis(2000));
-		collector.onDisconnect();
-
-		assertEquals(2, messages(0).size());
-	}
-
-	@Test
-	void aRepeatIsMeasuredFromTheOneThatWasKeptSoASpammerStillGetsThrough() {
-		Instant t = Instant.parse("2026-09-21T15:00:00Z");
-		collector.handle("[MVP+] TEST: spam", t);
-		collector.handle("[MVP+] TEST: spam", t.plusMillis(1500));           // dropped
-		collector.handle("[MVP+] TEST: spam", t.plusMillis(2500));           // 2.5 s after the kept one: kept
-		collector.onDisconnect();
-
-		assertEquals(2, messages(0).size());
-	}
-
-	@Test
-	void theSameTextInAnotherTypeOrFromAnotherPlayerIsNotARepeat() {
-		Instant t = Instant.parse("2026-09-21T15:00:00Z");
-		collector.handle("[MVP+] TEST: gg", t);
-		collector.handle("Party > [MVP+] TEST: gg", t.plusMillis(100));
-		collector.handle("[VIP] Alice: gg", t.plusMillis(200));
-		collector.handle("From [VIP] Alice: gg", t.plusMillis(300));
+		collector.handle("[MVP+] TEST: hello there", t.plusMillis(1));
+		collector.handle("[MVP+] TEST: hello there", t.plusMillis(900));
+		collector.handle("Party > [MVP+] TEST: hello there", t.plusMillis(950));
 		collector.onDisconnect();
 
 		assertEquals(4, messages(0).size());
 	}
 
 	@Test
-	void playersAreComparedIgnoringCapitalsForRepeats() {
-		Instant t = Instant.parse("2026-09-21T15:00:00Z");
-		collector.handle("[MVP+] TEST: gg", t);
-		collector.handle("[MVP+] test: gg", t.plusMillis(100));
-		collector.onDisconnect();
-
-		assertEquals(1, messages(0).size());
+	void theCollectedCountGoesUpWithEveryMessageKept() {
+		assertEquals(0, collector.collected());
+		collector.onLine("Alice: hi");
+		collector.onLine("Alice: hi");
+		collector.onLine("Sold: 5 items");              // not a person: not counted
+		assertEquals(2, collector.collected());
 	}
 
 	@Test
-	void yourOwnPublicMessageNeedsYouToBeInTheTabList() {
+	void yourOwnPublicMessageIsCollectedThoughYouAreNeverInTheLobbyNames() {
 		lobby = Set.of("alice");
-		collector.onLine("[MVP+] WeTrollALittle: a line that looks like mine but I am not listed");
+		collector.onLine("[MVP+] WeTrollALittle: hello lobby");
+		collector.onDisconnect();
+
+		assertEquals(1, sent.size());
+		assertEquals("WeTrollALittle", field(0, 0, "player"));
+		assertEquals("PUBLIC", field(0, 0, "type"));
+	}
+
+	@Test
+	void yourOwnMessagesFollowTheirOwnSwitch() {
+		allowed = false;
+		collector.onLine("[MVP+] WeTrollALittle: public with the others' switch off");
+		collector.onLine("Party > [MVP+] WeTrollALittle: party with the others' switch off");
+		collector.onLine("To [VIP] Bob: a private message I sent");
+		collector.onLine("Alice: someone else, not collected");
+		collector.onLine("From [VIP] Bob: someone else, not collected");
+		collector.onDisconnect();
+
+		assertEquals(1, sent.size());
+		assertEquals(3, messages(0).size());
+		assertEquals("PUBLIC", field(0, 0, "type"));
+		assertEquals("PARTY", field(0, 1, "type"));
+		assertEquals("PRIVATE_TO", field(0, 2, "type"));
+	}
+
+	@Test
+	void yourOwnMessagesAreNotCollectedWhenTheModIsSwitchedOff() {
+		allowed = false;
+		ownAllowed = false;
+		collector.onLine("[MVP+] WeTrollALittle: hello");
+		collector.onLine("To Bob: hi");
 		collector.onDisconnect();
 
 		assertEquals(0, sent.size());
 	}
 
 	@Test
-	void nothingIsCollectedWhileTheScannerOrChatSettingIsOff() {
+	void othersAreNotCollectedWhenTheModIsSwitchedOff() {
 		allowed = false;
 		collector.onLine("Alice: hello");
 		collector.onDisconnect();
@@ -279,7 +279,7 @@ class PlayerChatCollectorTest {
 	void aBrokenSinkOrLobbyDoesNotEscapeIntoTheGame() {
 		PlayerChatCollector broken = new PlayerChatCollector(message -> {
 			throw new IllegalStateException("website link exploded");
-		}, () -> true, () -> "Me", () -> {
+		}, () -> true, () -> true, () -> "Me", () -> {
 			throw new IllegalStateException("tab list exploded");
 		}, () -> "Hub");
 

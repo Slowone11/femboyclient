@@ -49,10 +49,10 @@ public final class PlayerInfoScreen extends Screen {
 	private int discordX0, discordX1, timesX0, timesX1, networthX0, networthX1, statY0, statY1;
 	private int chatHeadY, chatX0, chatX1, chatY0, chatY1;         // the chat heading, and the chat box below it
 	private int modelX0, modelX1;                                  // the 3D model's stage; empty when there is no room
-	private int menuTabX0, menuTabY0, menuTabX1, menuTabY1;        // the small tab back to the G menu, top right corner
+	private boolean fromMenu;                                        // opened from the G menu: Esc goes back there
 
 	// Texts built once.
-	private UiFont.Label playersLabel, chatLabel, discordLabel, timesLabel, networthLabel, copyLabel, menuTabLabel;
+	private UiFont.Label playersLabel, chatLabel, discordLabel, timesLabel, networthLabel, copyLabel;
 	private FormattedCharSequence titleText, hintText, dashText, copiedText, loadingText, noDataText, noChatText, searchText;
 	private FormattedCharSequence noPlayersText, noMatchText, pickText, playerCountText;
 	private int copiedWidth, searchTextWidth, playerCountWidth, noPreviewWidth;
@@ -120,13 +120,6 @@ public final class PlayerInfoScreen extends Screen {
 		winX1 = winX0 + windowWidth;
 		winY1 = winY0 + windowHeight;
 
-		// Floats over the dimmed backdrop at a fixed screen corner, clear of the header's own title and search box whatever the
-		// window width does.
-		menuTabX1 = width - 8;
-		menuTabX0 = menuTabX1 - (menuTabLabel.width() + 16);
-		menuTabY0 = 8;
-		menuTabY1 = menuTabY0 + 22;
-
 		int left = winX0 + Theme.PADDING;
 		int right = winX1 - Theme.PADDING;
 		int headerBottom = winY0 + Theme.HEADER_HEIGHT;
@@ -178,7 +171,6 @@ public final class PlayerInfoScreen extends Screen {
 		timesLabel = UiFont.Label.of(font, "Times met");
 		networthLabel = UiFont.Label.of(font, "Networth");
 		copyLabel = UiFont.Label.of(font, "Copy");
-		menuTabLabel = UiFont.Label.of(font, "◂ Menu");
 		titleText = UiFont.sequence("Lobby players", UiFont.Face.VALUE);
 		hintText = UiFont.sequence("Search players", UiFont.Face.BODY);
 		dashText = UiFont.sequence("—", UiFont.Face.VALUE);
@@ -253,12 +245,21 @@ public final class PlayerInfoScreen extends Screen {
 			graphics.pose().popMatrix();
 			UiDraw.setFade(1f);
 		}
-		drawMenuTab(graphics);          // outside the opening zoom, so its hitbox always matches what is drawn
 	}
 
-	/** The tab's bounds {x0, y0, x1, y1}, in GUI pixels. For the screenshot test. */
-	public int[] menuTabBounds() {
-		return new int[] {menuTabX0, menuTabY0, menuTabX1, menuTabY1};
+	/** Marks this screen as opened from the G menu, so Esc goes back there instead of to the game. */
+	public PlayerInfoScreen fromMenu() {
+		fromMenu = true;
+		return this;
+	}
+
+	@Override
+	public void onClose() {
+		if (fromMenu) {
+			minecraft.setScreenAndShow(new ClientMenuScreen());
+		} else {
+			super.onClose();
+		}
 	}
 
 	private void drawLayers(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta, long now) {
@@ -343,14 +344,6 @@ public final class PlayerInfoScreen extends Screen {
 		ClientPacketListener connection = Minecraft.getInstance().getConnection();
 		headerEntry = connection == null ? null : connection.getPlayerInfo(selected.id());
 		badgeStyle = -1;                                    // the old player's rank must not show while the new answer is on its way
-	}
-
-	/** The small tab, top right, back to the G menu ({@link ClientMenuScreen}): clicking it in {@link #mouseClicked} switches screens. */
-	private void drawMenuTab(GuiGraphicsExtractor graphics) {
-		boolean hover = UiDraw.inside(mouseNowX, mouseNowY, menuTabX0, menuTabY0, menuTabX1, menuTabY1);
-		UiDraw.hoverCard(graphics, menuTabX0, menuTabY0, menuTabX1, menuTabY1, Theme.ROW_RADIUS, hover);
-		UiDraw.label(graphics, font, menuTabLabel, menuTabX0 + 8, UiFont.topY(UiFont.Face.LABEL, menuTabY0 + 7),
-				hover ? Theme.ACCENT_LIGHT : Theme.TEXT_LABEL);
 	}
 
 	/** The search box: a rounded field in our font, with a blinking caret, an accent border while you type, and a hint while empty. */
@@ -607,10 +600,6 @@ public final class PlayerInfoScreen extends Screen {
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
 		if (event.button() == 0) {
-			if (UiDraw.inside(event.x(), event.y(), menuTabX0, menuTabY0, menuTabX1, menuTabY1)) {
-				minecraft.setScreenAndShow(new ClientMenuScreen());
-				return true;
-			}
 			boolean inSearch = UiDraw.inside(event.x(), event.y(), searchX0, searchY0, searchX1, searchY1);
 			setSearchFocused(inSearch);
 			if (inSearch) {

@@ -371,7 +371,7 @@ public final class ServerLink {
 		}
 	}
 
-	/** Tells the website whether the scanner is on, for example "ON (world: Hub)". Sent with the next heartbeat. */
+	/** Tells the website the scanner's status, "ON (all worlds)" or "OFF". Sent with the next heartbeat. */
 	public void setScanner(String status) {
 		if (!Objects.equals(this.scannerStatus, status)) {
 			this.scannerStatus = status;

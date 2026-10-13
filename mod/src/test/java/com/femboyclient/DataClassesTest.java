@@ -26,8 +26,7 @@ class DataClassesTest {
 		FemboyClientConfig config = FemboyClientConfig.fromProperties(new Properties(), new Properties());
 
 		assertTrue(config.enabled);
-		assertFalse(config.scanner, "the scanner is OFF until you switch it on");
-		assertEquals("", config.scannerWorld, "and covers every world unless one is chosen");
+		assertFalse(config.noParticles, "No Particles is off until you switch it on");
 		assertEquals("http://127.0.0.1:8000", config.serverUrl);
 		assertEquals("", config.enrollSecret);
 		assertEquals(5, config.uploadIntervalSeconds);
@@ -57,35 +56,23 @@ class DataClassesTest {
 	}
 
 	@Test
-	void theScannerSettingsAreReadFromTheConfigFile() throws IOException {
+	void theOldScannerLinesOfAnOlderFileAreIgnoredAndNotWrittenBack() throws IOException {
 		FemboyClientConfig config = FemboyClientConfig.fromProperties(new Properties(),
-				props("scanner=true\nscannerWorld=Crystal Hollows"));
+				props("scanner=false\nscannerWorld=Crystal Hollows\nplayerChat=false\nplayerTracker=true\nfullbright=true"));
 
-		assertTrue(config.scanner);
-		assertEquals("Crystal Hollows", config.scannerWorld);
-		assertTrue(config.enabled, "the scanner setting must not affect coin tracking");
+		assertTrue(config.enabled, "an old scanner line must not switch the mod off");
+		assertTrue(config.fullbright, "the rest of the file still loads");
+		Properties written = config.toProperties();
+		assertFalse(written.containsKey("scanner"));
+		assertFalse(written.containsKey("scannerWorld"));
+		assertFalse(written.containsKey("playerChat"));
 	}
 
 	@Test
-	void anOldPlayerTrackerLineIsIgnoredSoTheScannerStaysOff() throws IOException {
-		FemboyClientConfig config = FemboyClientConfig.fromProperties(new Properties(), props("playerTracker=true"));
-		assertFalse(config.scanner);
-	}
-
-	@Test
-	void scannerAllowsFollowsTheSetting() {
-		FemboyClientConfig config = new FemboyClientConfig();
-		assertFalse(config.scannerAllows("Hub"), "off scans nothing");
-
-		config.scanner = true;
-		assertTrue(config.scannerAllows("Hub"));
-		assertTrue(config.scannerAllows("Unknown"), "every world includes an unknown one");
-
-		config.scannerWorld = "Crystal Hollows";
-		assertTrue(config.scannerAllows("Crystal Hollows"));
-		assertTrue(config.scannerAllows("crystal hollows"), "ignoring case");
-		assertFalse(config.scannerAllows("Hub"));
-		assertFalse(config.scannerAllows("Unknown"), "an unknown world never matches a chosen one");
+	void noParticlesIsReadAndWritten() throws IOException {
+		FemboyClientConfig config = FemboyClientConfig.fromProperties(new Properties(), props("noParticles=true"));
+		assertTrue(config.noParticles);
+		assertEquals("true", config.toProperties().getProperty("noParticles"));
 	}
 
 	@Test
