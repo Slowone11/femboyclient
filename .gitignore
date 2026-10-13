@@ -11,3 +11,11 @@ dist/
 *.db-wal
 *.db-shm
 *.log
+
+# Per-machine agent voice rules dropped by caveman-init (CLAUDE.md has its own copy).
+AGENTS.md
+.cursor/
+.clinerules/
+.windsurf/
+.opencode/
+.github/copilot-instructions.md
