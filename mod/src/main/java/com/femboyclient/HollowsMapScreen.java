@@ -10,8 +10,8 @@ import net.minecraft.network.chat.Component;
  * Esc to keep it where it is. The map always has north up. The same controls work in the chat (see {@link HollowsMapDrag}). Until a
  * Mansion is found it shows a made-up one, so you can see how it will look.
  *
- * The corner buttons: "◂ Menu" back to the G menu, "Reset" puts the map back in the top left at its normal size, and
- * "Dump nearby blocks" writes what is loaded around you to a file, to study what a structure is made of.
+ * The corner buttons: "Reset" puts the map back in the top left at its normal size, and "Dump nearby blocks" writes what is
+ * loaded around you to a file, to study what a structure is made of. Opened from the G menu, Esc goes back there.
  */
 public final class HollowsMapScreen extends Screen {
 
@@ -20,10 +20,10 @@ public final class HollowsMapScreen extends Screen {
 	/** True while this screen is open, so the corner map is not drawn a second time under it. */
 	static volatile boolean open;
 
-	private int menuX0, menuY0, menuX1, menuY1;
+	private boolean fromMenu;
 	private int resetX0, resetY0, resetX1, resetY1;
 	private int dumpX0, dumpY0, dumpX1, dumpY1;
-	private UiFont.Label menuLabel, resetLabel, dumpLabel;
+	private UiFont.Label resetLabel, dumpLabel;
 
 	public HollowsMapScreen() {
 		super(Component.literal("MansionFinder"));
@@ -33,19 +33,14 @@ public final class HollowsMapScreen extends Screen {
 	protected void init() {
 		open = true;
 		int x1 = width - 8, x0 = x1 - BTN_W;
-		menuX0 = x0;
-		menuX1 = x1;
-		menuY0 = 8;
-		menuY1 = menuY0 + BTN_H;
 		resetX0 = x0;
 		resetX1 = x1;
-		resetY0 = menuY1 + BTN_GAP;
+		resetY0 = 8;
 		resetY1 = resetY0 + BTN_H;
 		dumpX0 = x0;
 		dumpX1 = x1;
 		dumpY0 = resetY1 + BTN_GAP;
 		dumpY1 = dumpY0 + BTN_H;
-		menuLabel = UiFont.Label.of(font, "◂ Menu");
 		resetLabel = UiFont.Label.of(font, "Reset position");
 		dumpLabel = UiFont.Label.of(font, "Dump nearby blocks");
 	}
@@ -54,9 +49,19 @@ public final class HollowsMapScreen extends Screen {
 		return HollowsHud.model().isEmpty() ? HollowsMapModel.demo() : HollowsHud.model();
 	}
 
-	/** The "◂ Menu" button's bounds {x0, y0, x1, y1}, in GUI pixels. For the screenshot test. */
-	public int[] menuButtonBounds() {
-		return new int[] {menuX0, menuY0, menuX1, menuY1};
+	/** Marks this screen as opened from the G menu, so Esc goes back there instead of to the game. */
+	public HollowsMapScreen fromMenu() {
+		fromMenu = true;
+		return this;
+	}
+
+	@Override
+	public void onClose() {
+		if (fromMenu) {
+			minecraft.setScreenAndShow(new ClientMenuScreen());
+		} else {
+			super.onClose();
+		}
 	}
 
 	/** The "Reset position" button's bounds {x0, y0, x1, y1}, in GUI pixels. For the screenshot test. */
@@ -104,7 +109,6 @@ public final class HollowsMapScreen extends Screen {
 		}
 		graphics.centeredText(font, "Drag the map to move it · drag its corner or scroll to resize · Esc to keep it", width / 2, height - 24, 0xFFE6E9EF);
 
-		button(graphics, menuX0, menuY0, menuX1, menuY1, menuLabel, mouseX, mouseY);
 		button(graphics, resetX0, resetY0, resetX1, resetY1, resetLabel, mouseX, mouseY);
 		button(graphics, dumpX0, dumpY0, dumpX1, dumpY1, dumpLabel, mouseX, mouseY);
 	}
@@ -119,10 +123,6 @@ public final class HollowsMapScreen extends Screen {
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
 		if (event.button() == 0) {
-			if (UiDraw.inside(event.x(), event.y(), menuX0, menuY0, menuX1, menuY1)) {
-				minecraft.setScreenAndShow(new ClientMenuScreen());
-				return true;
-			}
 			if (UiDraw.inside(event.x(), event.y(), resetX0, resetY0, resetX1, resetY1)) {
 				HollowsMap.reset(FemboyClientConfig.get());
 				return true;

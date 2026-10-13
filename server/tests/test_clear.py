@@ -61,8 +61,9 @@ def test_clearing_one_world_keeps_the_others(client, local, data):
 
     assert result["visits_removed"] == 2 and result["players_removed"] == 2   # HubOnly and HubAlso
     assert player(client, "HubOnly") is None and player(client, "MinesOnly") is not None
-    tree = client.get("/tracker/tree", params={"owner": UUID_A}).json()
-    assert [n["world"] for n in tree["nodes"] if n["type"] == "world"] == ["Dwarven Mines"]
+    overview = client.get("/tracker/overview", params={"owner": UUID_A}).json()
+    assert [w["world"] for w in overview["worlds"]] == ["Dwarven Mines"]
+    assert overview["players"] == 2, "Steve and MinesOnly; the meetings are worked out again from what is left"
 
 
 def test_a_player_met_elsewhere_stays_and_their_counts_are_worked_out_again(client, local, data):

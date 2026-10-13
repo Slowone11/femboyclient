@@ -66,7 +66,7 @@ def test_scope_owner_means_every_account_for_missing_empty_or_all():
 
 
 def test_a_bad_owner_is_still_refused(client):
-    for path in ("/tracker/tree", "/tracker/worlds", "/tracker/party", "/tracker/mychat", "/tracker/chats"):
+    for path in ("/tracker/overview", "/tracker/players", "/tracker/worlds", "/tracker/party", "/tracker/mychat", "/tracker/chats"):
         assert client.get(path, params={"owner": "nope"}).status_code == 422, path
 
 
@@ -151,23 +151,21 @@ def test_a_name_that_is_already_saved_is_never_overwritten_by_the_migration(old_
 
 # ------------------------------------------------------------------ reading all accounts together
 
-def test_the_tree_of_all_accounts_combines_worlds_and_players(client, two):
+def test_the_players_of_all_accounts_combine_worlds_and_players(client, two):
     key_a, key_b = two
     snap(client, key_a, ["Alice", "Bob"], world="Hub")
     snap(client, key_b, ["Bob", "Cat"], world="The End", visit="2026-09-21T16:00:00Z", me=B)
 
-    everyone = get(client, "/tracker/tree", owner="all")
-    only_a = get(client, "/tracker/tree", owner=UUID_A)
-    default = get(client, "/tracker/tree")
+    everyone = get(client, "/tracker/players", owner="all")["players"]
+    only_a = get(client, "/tracker/players", owner=UUID_A)["players"]
+    default = get(client, "/tracker/players")["players"]
 
-    assert everyone["nodes"][0]["label"] == "All accounts" and everyone["nodes"][0]["uuid"] is None
-    assert only_a["nodes"][0]["label"] == A
-    assert {n["label"] for n in everyone["nodes"] if n["type"] == "player"} == {"Alice", "Bob", "Cat"}
-    assert {n["label"] for n in only_a["nodes"] if n["type"] == "player"} == {"Alice", "Bob"}
-    assert {n["world"] for n in everyone["nodes"] if n["type"] == "world"} == {"Hub", "The End"}
-    assert default["nodes"] == everyone["nodes"]
+    assert {p["username"] for p in everyone} == {"Alice", "Bob", "Cat"}
+    assert {p["username"] for p in only_a} == {"Alice", "Bob"}
+    assert {w["world"] for w in get(client, "/tracker/overview", owner="all")["worlds"]} == {"Hub", "The End"}
+    assert default == everyone
 
-    bob = next(n for n in everyone["nodes"] if n.get("label") == "Bob")
+    bob = next(p for p in everyone if p["username"] == "Bob")
     assert set(bob["worlds"]) == {"Hub", "The End"}
 
 
@@ -196,15 +194,14 @@ def test_the_party_list_of_all_accounts_never_lists_your_own_accounts(client, tw
     assert get(client, "/tracker/worlds", owner="all")["party_players"] == 2
 
 
-def test_the_tree_of_all_accounts_has_one_parties_branch_without_your_own_accounts(client, two):
+def test_the_close_tier_of_all_accounts_never_lists_your_own_accounts(client, two):
     key_a, key_b = two
     party(client, key_a, ["Alice", B])
     party(client, key_b, ["Cat"], me=B)
 
-    tree = get(client, "/tracker/tree", owner="all")
-    branch = next(n for n in tree["nodes"] if n["type"] == "party")
-    assert branch["players"] == 2
-    assert {n["label"] for n in tree["nodes"] if n["type"] == "player"} == {"Alice", "Cat"}
+    assert get(client, "/tracker/overview", owner="all")["tiers"]["close"] == 2
+    close = get(client, "/tracker/players", owner="all", tier="close")["players"]
+    assert {p["username"] for p in close} == {"Alice", "Cat"}
 
 
 def test_your_own_chat_of_all_accounts_says_who_said_it(client, two):

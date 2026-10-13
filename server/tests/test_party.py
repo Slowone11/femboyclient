@@ -143,86 +143,51 @@ def test_the_search_lists_which_account_partied(client):
     assert [p["account"] for p in find(client, "Alice")["parties"]] == ["AltAccount", ME]
 
 
-def test_the_graph_marks_every_player_you_have_partied_with(client):
+def listed(client, owner=UUID_A, **params):
+    """The Players tab's list, by name, as {username: row}."""
+    page = client.get("/tracker/players", params={"owner": owner, "sort": "name", "limit": 500, **params}).json()
+    return {p["username"]: p for p in page["players"]}
+
+
+def test_the_player_list_says_how_often_you_partied_with_each_player(client):
     key = register(client)
     snap(client, key, ["Alice", "Bob", "Carol"], "2026-09-21T14:00:00Z", world="Hub")
     snap(client, key, ["Alice"], "2026-09-21T15:00:00Z", world="Dwarven Mines")
     party(client, key, ["Alice", "Carol"])
     party(client, key, ["Alice"], T2)
 
-    tree = client.get("/tracker/tree", params={"owner": UUID_A}).json()
-    marks = {n["label"]: n["party_times"] for n in tree["nodes"] if n["type"] == "player"}
+    marks = {name: p["party_times"] for name, p in listed(client).items()}
     assert marks == {"Alice": 2, "Bob": 0, "Carol": 1}
 
 
-def tree(client, owner=UUID_A, **params):
-    return client.get("/tracker/tree", params={"owner": owner, **params}).json()
-
-
-def party_links(result):
-    return {l["target"]: l["times"] for l in result["links"] if l["source"] == "party"}
-
-
-def test_players_partied_with_get_their_own_parties_branch_even_if_never_met_in_a_lobby(client):
+def test_players_partied_with_are_in_the_close_tier_even_if_never_met_in_a_lobby(client):
     key = register(client)
-    snap(client, key, ["Alice"], "2026-09-21T14:00:00Z")
+    snap(client, key, ["Alice", "Bob"], "2026-09-21T14:00:00Z")
     party(client, key, ["Alice", "Zed"])
     party(client, key, ["Zed"], T2)
 
-    result = tree(client)
-    by_label = {n["label"]: n for n in result["nodes"] if n["type"] == "player"}
-    node = next(n for n in result["nodes"] if n["type"] == "party")
-
-    assert set(by_label) == {"Alice", "Zed"}, "Zed was never in a lobby but is on the tree"
-    assert node["id"] == "party" and node["label"] == "Parties" and node["players"] == 2
-    assert {"source": "me", "target": "party"} in result["links"]
-    assert party_links(result) == {by_label["Alice"]["id"]: 1, by_label["Zed"]["id"]: 2}
-    assert by_label["Zed"]["party_times"] == 2 and by_label["Zed"]["worlds"] == {}
-    assert by_label["Zed"]["times_seen"] == 0
+    close = listed(client, tier="close")
+    assert set(close) == {"Alice", "Zed"}, "Zed was never in a lobby but is listed"
+    assert close["Zed"]["party_times"] == 2 and close["Zed"]["worlds"] == {}
+    assert close["Zed"]["meetings"] == 0 and close["Alice"]["meetings"] == 1
+    assert client.get("/tracker/overview", params={"owner": UUID_A}).json()["tiers"]["close"] == 2
 
 
-def test_a_player_in_a_world_and_a_party_is_linked_to_both_branches(client):
-    key = register(client)
-    snap(client, key, ["Alice"], "2026-09-21T14:00:00Z", world="Hub")
-    party(client, key, ["Alice"])
-
-    result = tree(client)
-    alice = next(n["id"] for n in result["nodes"] if n.get("label") == "Alice")
-    assert {l["source"] for l in result["links"] if l["target"] == alice} == {"w:Hub", "party"}
-    assert not [n for n in result["nodes"] if n["type"] == "world" and n["world"] == "Parties"]
-
-
-def test_the_parties_branch_is_only_there_when_there_are_parties(client):
+def test_the_close_tier_is_empty_without_parties_or_tags(client):
     key = register(client)
     snap(client, key, ["Alice"], "2026-09-21T14:00:00Z")
 
-    assert not [n for n in tree(client)["nodes"] if n["type"] == "party"]
+    assert listed(client, tier="close") == {}
 
 
-def test_a_world_filter_hides_the_parties_branch(client):
+def test_in_one_world_the_close_tier_only_has_players_met_there(client):
     key = register(client)
     snap(client, key, ["Alice"], "2026-09-21T14:00:00Z", world="Hub")
     party(client, key, ["Alice", "Zed"])
 
-    result = tree(client, world="Hub")
-    assert not [n for n in result["nodes"] if n["type"] == "party"]
-    assert [n["label"] for n in result["nodes"] if n["type"] == "player"] == ["Alice"]
-    assert result["nodes"][[n["type"] for n in result["nodes"]].index("player")]["party_times"] == 1, "the glow still applies"
-
-
-def test_the_parties_branch_comes_once_on_the_first_page_and_does_not_use_up_the_limit(client):
-    key = register(client)
-    for hour in range(3):
-        snap(client, key, ["Lobby%d" % hour], "2026-09-20T%02d:00:00Z" % (10 + hour))
-    party(client, key, ["Zed", "Amy"])
-
-    first = tree(client, players=2)
-    second = tree(client, players=2, before=first["next_before"])
-
-    assert len([n for n in first["nodes"] if n["type"] == "party"]) == 1
-    assert sorted(n["label"] for n in first["nodes"] if n["type"] == "player") == ["Amy", "Lobby1", "Lobby2", "Zed"]
-    assert not [n for n in second["nodes"] if n["type"] == "party"]
-    assert first["has_more"] is True and [n["label"] for n in second["nodes"] if n["type"] == "player"] == ["Lobby0"]
+    close = listed(client, tier="close", world="Hub")
+    assert list(close) == ["Alice"]
+    assert close["Alice"]["party_times"] == 1
 
 
 # ---------------------------------------------- each account has its own parties
@@ -232,9 +197,8 @@ def test_each_account_only_sees_the_players_it_partied_with(client):
     party(client, key_a, ["BayHarborBeater"], T1)                    # the main partied with the alt
     party(client, key_b, [ME], T1, me="BayHarborBeater")             # and the alt partied with the main
 
-    main, alt = tree(client, UUID_A), tree(client, UUID_B)
-    assert sorted(n["label"] for n in main["nodes"] if n["type"] == "player") == ["BayHarborBeater"]
-    assert sorted(n["label"] for n in alt["nodes"] if n["type"] == "player") == [ME]
+    assert list(listed(client, UUID_A, tier="close")) == ["BayHarborBeater"]
+    assert list(listed(client, UUID_B, tier="close")) == [ME]
     assert client.get("/tracker/worlds", params={"owner": UUID_A}).json()["party_players"] == 1
     assert client.get("/tracker/worlds", params={"owner": UUID_B}).json()["party_players"] == 1
 
@@ -367,8 +331,7 @@ def test_you_are_never_listed_in_your_own_parties_even_if_a_row_exists(client):
                           " VALUES (?, ?, ?, ?, 0)", (ME, ME.lower(), T1, T1)).lastrowid
         conn.execute("INSERT INTO tracker_parties (owner_uuid, player_id, joined_at) VALUES (?, ?, ?)", (UUID_A, me, T1))
 
-    result = tree(client)
-    assert sorted(n["label"] for n in result["nodes"] if n["type"] == "player") == ["Alice"]
+    assert list(listed(client, tier="close")) == ["Alice"]
     assert [p["username"] for p in client.get("/tracker/party", params={"owner": UUID_A}).json()["players"]] == ["Alice"]
     assert client.get("/tracker/worlds", params={"owner": UUID_A}).json()["party_players"] == 1
     mine = client.get("/tracker/search", params={"q": ME, "exact": "true", "owner": UUID_A}).json()["players"][0]

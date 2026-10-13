@@ -149,6 +149,8 @@ try {
   });
 
   document.addEventListener("tab-changed", (e) => { if (e.detail === "frienemys" && !loaded) load(); });
+  // A tag set from a player's panel on the Players tab: load the list again the next time this tab is opened.
+  document.addEventListener("frienemies-changed", () => { if (!$("tabFrienemys").hidden) load(); else loaded = false; });
   if (!$("tabFrienemys").hidden) load(); else render();
 })();
 } catch (e) { console.error("frienemys:", e); }

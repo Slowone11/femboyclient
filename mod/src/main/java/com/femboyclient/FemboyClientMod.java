@@ -49,16 +49,14 @@ public class FemboyClientMod implements ClientModInitializer {
 	/** Notices who joins your party and reports them to the website. */
 	public static final PartyTracker PARTY_TRACKER = new PartyTracker(
 			payload -> FemboyClientMod.SERVER.enqueueTracker(payload),
-			() -> FemboyClientConfig.get().enabled && FemboyClientConfig.get().scanner,
+			() -> FemboyClientConfig.get().enabled,
 			() -> Account.current().name());
 
-	/** Collects what other players say and reports it to the website (the Chat tab on a player). */
+	/** Collects what other players say, and what you say, and reports it to the website (Chat Logs, and the Chat tab on a player). */
 	public static final PlayerChatCollector CHAT_COLLECTOR = new PlayerChatCollector(
 			payload -> FemboyClientMod.SERVER.enqueueTracker(payload),
-			() -> {
-				FemboyClientConfig config = FemboyClientConfig.get();
-				return config.enabled && config.playerChat && config.scannerAllows(PLAYER_TRACKER.knownWorld());
-			},
+			() -> FemboyClientConfig.get().enabled,
+			() -> FemboyClientConfig.get().enabled,
 			() -> Account.current().name(),
 			PLAYER_TRACKER::lobbyNames,
 			PLAYER_TRACKER::knownWorld);

@@ -30,18 +30,17 @@ def count(table):
         return conn.execute("SELECT COUNT(*) FROM " + table).fetchone()[0]
 
 
-def tree(client, *worlds, owner=UUID_A, **params):
-    query = [("owner", owner)] + [("world", w) for w in worlds] + list(params.items())
-    return client.get("/tracker/tree", params=query).json()
+def listed(client, world=None, owner=UUID_A, **params):
+    """The Players tab's list for one world (or every world), as {username: row}."""
+    query = {"owner": owner, "sort": "name", "limit": 500, **params}
+    if world is not None:
+        query["world"] = world
+    return {p["username"]: p for p in client.get("/tracker/players", params=query).json()["players"]}
 
 
 def search(client, q, *worlds, **params):
     query = [("q", q)] + [("world", w) for w in worlds] + list(params.items())
     return client.get("/tracker/search", params=query).json()["players"]
-
-
-def player_labels(result):
-    return sorted(n["label"] for n in result["nodes"] if n["type"] == "player")
 
 
 @pytest.fixture()
@@ -142,59 +141,34 @@ def test_no_server_details_are_stored_when_a_server_code_is_sent_as_the_world(cl
         assert secret not in dump
 
 
-# ------------------------------------------------- filtering the tree by world
+# ------------------------------------------------- the player list in one world
 
-def world_nodes(result):
-    return sorted(n["world"] for n in result["nodes"] if n["type"] == "world")
-
-
-def test_filtering_by_one_world_returns_only_that_world_and_its_players(client, three_worlds):
-    result = tree(client, "Crystal Hollows")
-
-    assert world_nodes(result) == ["Crystal Hollows"]
-    assert player_labels(result) == ["HollowsOnly", "Steve"]
+def test_one_world_lists_only_the_players_met_there(client, three_worlds):
+    assert list(listed(client, "Crystal Hollows")) == ["HollowsOnly", "Steve"]
 
 
-def test_a_player_seen_in_three_worlds_is_linked_only_to_the_chosen_world(client, three_worlds):
-    result = tree(client, "Crystal Hollows")
-    steve = next(n["id"] for n in result["nodes"] if n.get("label") == "Steve")
+def test_in_one_world_meetings_and_worlds_count_only_that_world(client, three_worlds):
+    steve_all = listed(client)["Steve"]
+    steve_hollows = listed(client, "Crystal Hollows")["Steve"]
+    steve_hub = listed(client, "Hub")["Steve"]
 
-    parents = {l["source"] for l in result["links"] if l["target"] == steve}
-    assert parents == {"w:Crystal Hollows"}
-
-
-def test_with_a_filter_on_times_met_counts_only_those_worlds(client, three_worlds):
-    steve_all = next(n for n in tree(client)["nodes"] if n.get("label") == "Steve")
-    steve_hollows = next(n for n in tree(client, "Crystal Hollows")["nodes"] if n.get("label") == "Steve")
-    steve_hub = next(n for n in tree(client, "Hub")["nodes"] if n.get("label") == "Steve")
-
-    assert steve_all["times_seen"] == 4
-    assert steve_hollows["times_seen"] == 1 and steve_hollows["times_seen_total"] == 4
-    assert steve_hub["times_seen"] == 2
+    assert steve_all["sightings"] == 4 and steve_all["worlds"] == {"Hub": 2, "Crystal Hollows": 1, "Dungeon Hub": 1}
+    assert steve_hollows["sightings"] == 1 and steve_hollows["worlds"] == {"Crystal Hollows": 1}
+    assert steve_hub["sightings"] == 2 and steve_hub["last_world"] == "Hub"
 
 
-def test_several_worlds_can_be_chosen_at_once(client, three_worlds):
-    result = tree(client, "Crystal Hollows", "Dungeon Hub")
-
-    assert world_nodes(result) == ["Crystal Hollows", "Dungeon Hub"]
-    assert player_labels(result) == ["DungeonHubOnly", "HollowsOnly", "Steve"]
-    assert result["worlds"] == ["crystal hollows", "dungeon hub"]
+def test_the_world_ignores_case(client, three_worlds):
+    assert list(listed(client, "CRYSTAL hollows")) == ["HollowsOnly", "Steve"]
+    assert client.get("/tracker/overview", params={"owner": UUID_A, "world": "CRYSTAL hollows"}).json()["world"] == "crystal hollows"
 
 
-def test_the_world_filter_ignores_case_and_repeats(client, three_worlds):
-    assert player_labels(tree(client, "CRYSTAL hollows", "crystal HOLLOWS")) == ["HollowsOnly", "Steve"]
+def test_without_a_world_every_player_is_listed(client, three_worlds):
+    assert list(listed(client)) == ["DungeonHubOnly", "HollowsOnly", "HubAlso", "HubOnly", "Steve"]
 
 
-def test_without_a_filter_every_world_is_returned(client, three_worlds):
-    result = tree(client)
-
-    assert world_nodes(result) == ["Crystal Hollows", "Dungeon Hub", "Hub"]
-    assert player_labels(result) == ["DungeonHubOnly", "HollowsOnly", "HubAlso", "HubOnly", "Steve"]
-
-
-def test_a_world_with_no_visits_gives_an_empty_tree(client, three_worlds):
-    result = tree(client, "The End")
-    assert world_nodes(result) == [] and player_labels(result) == [] and result["has_more"] is False
+def test_a_world_with_no_visits_lists_nobody(client, three_worlds):
+    assert listed(client, "The End") == {}
+    assert client.get("/tracker/overview", params={"owner": UUID_A, "world": "The End"}).json()["players"] == 0
 
 
 def test_paging_works_within_a_world(client):
@@ -203,36 +177,21 @@ def test_paging_works_within_a_world(client):
         snap(client, key, ["HubPlayer%d" % hour], "2026-09-20T%02d:00:00Z" % (10 + hour), world="Hub")
         snap(client, key, ["DHubPlayer%d" % hour], "2026-09-20T%02d:30:00Z" % (10 + hour), world="Dungeon Hub")
 
-    first = tree(client, "Hub", players=2)
-    second = tree(client, "Hub", players=2, before=first["next_before"])
-    last = tree(client, "Hub", players=2, before=second["next_before"])
-
-    assert [len(player_labels(p)) for p in (first, second, last)] == [2, 2, 1]
-    assert [first["has_more"], second["has_more"], last["has_more"]] == [True, True, False]
-    everyone = player_labels(first) + player_labels(second) + player_labels(last)
-    assert len(everyone) == 5 and all(name.startswith("HubPlayer") for name in everyone)
+    pages = [client.get("/tracker/players", params={"owner": UUID_A, "world": "Hub", "limit": 2, "offset": n}).json()
+             for n in (0, 2, 4)]
+    assert [len(p["players"]) for p in pages] == [2, 2, 1]
+    assert all(p["total"] == 5 for p in pages)
+    everyone = [x["username"] for p in pages for x in p["players"]]
+    assert len(set(everyone)) == 5 and all(name.startswith("HubPlayer") for name in everyone)
 
 
-def test_steve_links_three_world_nodes_with_a_count_for_each(client, three_worlds):
-    result = tree(client)
-    steve = next(n for n in result["nodes"] if n.get("label") == "Steve")
-    assert steve["worlds"] == {"Hub": 2, "Crystal Hollows": 1, "Dungeon Hub": 1}
-    assert {l["source"] for l in result["links"] if l["target"] == steve["id"]} == {
-        "w:Hub", "w:Crystal Hollows", "w:Dungeon Hub"}
-
-
-def test_the_filter_keeps_each_account_separate(client):
+def test_one_world_keeps_each_account_separate(client):
     key_a, key_b = register(client, UUID_A, ME), register(client, UUID_B, "AltAccount")
     snap(client, key_a, ["MainGuest"], HUB_AT, world="Hub")
     snap(client, key_b, ["AltGuest"], HUB_AT, world="Hub", me="AltAccount")
 
-    assert player_labels(tree(client, "Hub")) == ["MainGuest"]
-    assert player_labels(tree(client, "Hub", owner=UUID_B)) == ["AltGuest"]
-
-
-def test_too_many_worlds_in_a_filter_are_refused(client):
-    params = [("owner", UUID_A)] + [("world", "World%d" % i) for i in range(21)]
-    assert client.get("/tracker/tree", params=params).status_code == 422
+    assert list(listed(client, "Hub")) == ["MainGuest"]
+    assert list(listed(client, "Hub", owner=UUID_B)) == ["AltGuest"]
 
 
 # ------------------------------------------------- filtering the search by world

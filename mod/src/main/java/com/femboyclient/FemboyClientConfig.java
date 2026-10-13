@@ -30,24 +30,9 @@ public final class FemboyClientConfig {
 	/** The master switch: off stops every module and all talking to the website. */
 	public boolean enabled = true;
 
-	/**
-	 * The player scanner: report the usernames in your lobby to the website (the
-	 * Lobby Networth tab). OFF by default. Switch it in the G menu.
-	 */
-	public boolean scanner = false;
-
-	/**
-	 * Only scan while in this SkyBlock world, for example "Crystal Hollows". Empty
-	 * means every world. Only used while the scanner is on.
-	 */
-	public String scannerWorld = "";
-
-	/**
-	 * With the scanner on, also record what other players say (the Chat tab on a player in the
-	 * Lobby Networth). On by default because it only runs while the scanner is on. Set it to
-	 * false to keep scanning usernames without recording chat.
-	 */
-	public boolean playerChat = true;
+	// The player scanner has no setting: it always reports the players in your lobby and what players say, in every
+	// world, while "enabled" is true (see PlayerTracker and PlayerChatCollector). The old "scanner", "scannerWorld" and
+	// "playerChat" lines of an older file are ignored.
 
 	/**
 	 * The Lobby Networth module: look up each lobby player on the website (their networth, rank and how often you have
@@ -55,11 +40,6 @@ public final class FemboyClientConfig {
 	 * screen still lists who is in your lobby, from the game's own tab list.
 	 */
 	public boolean lobbyNetworth = true;
-
-	/** True if the scanner is on and the given SkyBlock world is one it is set to scan. */
-	public boolean scannerAllows(String world) {
-		return scanner && (scannerWorld.isEmpty() || scannerWorld.equalsIgnoreCase(world));
-	}
 
 	/** Base address of the website API. No trailing slash needed. */
 	public String serverUrl = "http://127.0.0.1:8000";
@@ -136,6 +116,12 @@ public final class FemboyClientConfig {
 	public boolean keepsprint = false;
 
 	/**
+	 * No Particles: hides every particle (block breaking, mobs, hits, explosions, potions, rain, abilities) before it is made
+	 * (see NoParticles). Off by default, since it changes how the game looks. Switch it in the G menu.
+	 */
+	public boolean noParticles = false;
+
+	/**
 	 * The Looped Clicker module: shows click controls whenever a container is open (see
 	 * {@link LoopedClickerOverlay}). Off by default. Switching it on in the G menu only makes the controls
 	 * appear — the loop never starts on its own. Fields keep their original "clicker" names so a config file
@@ -206,9 +192,8 @@ public final class FemboyClientConfig {
 			config.save();
 		}
 
-		LOGGER.info("config: enabled={} scanner={} scannerWorld={} serverUrl={} serverDir={} enrollSecret={} apiKey={} updates={}",
-				config.enabled, config.scanner,
-				config.scannerWorld.isEmpty() ? "(any)" : config.scannerWorld, config.serverUrl,
+		LOGGER.info("config: enabled={} serverUrl={} serverDir={} enrollSecret={} apiKey={} updates={}",
+				config.enabled, config.serverUrl,
 				config.serverDir.isEmpty() ? "(not set)" : config.serverDir,
 				config.enrollSecret.isBlank() ? "(not set)" : "(set)",
 				config.apiKey.isBlank() ? "(not set)" : "(set)",
@@ -270,9 +255,6 @@ public final class FemboyClientConfig {
 	/** Copies over every value present in the properties, ignoring bad ones. */
 	private void apply(Properties props) {
 		enabled = bool(props, "enabled", enabled);
-		scanner = bool(props, "scanner", scanner);
-		scannerWorld = text(props, "scannerWorld", scannerWorld, true);
-		playerChat = bool(props, "playerChat", playerChat);
 		lobbyNetworth = bool(props, "lobbyNetworth", lobbyNetworth);
 		serverUrl = text(props, "serverUrl", serverUrl, false);
 		serverDir = text(props, "serverDir", serverDir, true);
@@ -286,6 +268,7 @@ public final class FemboyClientConfig {
 		frienemys = bool(props, "frienemys", frienemys);
 		fullbright = bool(props, "fullbright", fullbright);
 		keepsprint = bool(props, "keepsprint", keepsprint);
+		noParticles = bool(props, "noParticles", noParticles);
 		clicker = bool(props, "clicker", clicker);
 		clickerRightClick = bool(props, "clickerRightClick", clickerRightClick);
 		clickerMs = Math.max(LoopedClicker.MIN_MS, Math.min(LoopedClicker.MAX_MS, integer(props, "clickerMs", clickerMs)));
@@ -315,9 +298,6 @@ public final class FemboyClientConfig {
 	Properties toProperties() {
 		Properties props = new Properties();
 		props.setProperty("enabled", Boolean.toString(enabled));
-		props.setProperty("scanner", Boolean.toString(scanner));
-		props.setProperty("scannerWorld", scannerWorld);
-		props.setProperty("playerChat", Boolean.toString(playerChat));
 		props.setProperty("lobbyNetworth", Boolean.toString(lobbyNetworth));
 		props.setProperty("serverUrl", serverUrl);
 		props.setProperty("serverDir", serverDir);
@@ -331,6 +311,7 @@ public final class FemboyClientConfig {
 		props.setProperty("frienemys", Boolean.toString(frienemys));
 		props.setProperty("fullbright", Boolean.toString(fullbright));
 		props.setProperty("keepsprint", Boolean.toString(keepsprint));
+		props.setProperty("noParticles", Boolean.toString(noParticles));
 		props.setProperty("clicker", Boolean.toString(clicker));
 		props.setProperty("clickerRightClick", Boolean.toString(clickerRightClick));
 		props.setProperty("clickerMs", Integer.toString(clickerMs));

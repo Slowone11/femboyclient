@@ -15,7 +15,7 @@ import java.util.function.Supplier;
  *
  * It only reads chat lines the game already received, and sends nothing to the game
  * server. Only usernames and the time are reported, never the chat line. It works
- * only while the player scanner is on (the Scanner module in the G menu), like the rest of
+ * whenever the mod is enabled (the scanner is always on), like the rest of
  * Lobby Networth, and it does nothing about invites: see PartyChat.
  *
  * The chat hook lives in FemboyClientMod. All of this runs on the client thread.
@@ -35,7 +35,7 @@ public final class PartyTracker {
 
 	/**
 	 * @param sink    where a finished message goes (the website link)
-	 * @param allowed true while party tracking may run (the mod is on and the scanner is on)
+	 * @param allowed true while party tracking may run (the mod is enabled)
 	 * @param me      your own account name
 	 */
 	public PartyTracker(Consumer<JsonObject> sink, BooleanSupplier allowed, Supplier<String> me) {

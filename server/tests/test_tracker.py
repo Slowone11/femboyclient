@@ -1,4 +1,4 @@
-"""Tests for the player tracker: snapshot, search, tree and live events."""
+"""Tests for the player tracker: snapshot, search, meetings and tiers, and live events."""
 
 import json
 import sqlite3
@@ -316,119 +316,135 @@ def test_search_covers_every_account_you_play(client):
     assert count("tracker_players") == 1
 
 
-# ---------------------------------------------------------------------------- tree
+# ------------------------------------------------------------------- meetings and tiers
 
-def tree(client, **params):
-    return client.get("/tracker/tree", params={"owner": UUID_A, **params}).json()
+def overview(client, **params):
+    return client.get("/tracker/overview", params={"owner": UUID_A, **params}).json()
 
 
-def test_the_tree_has_you_in_the_centre_a_node_per_world_and_the_players_around_it(client):
+def players(client, **params):
+    return client.get("/tracker/players", params={"owner": UUID_A, **params}).json()
+
+
+def names(page):
+    return [p["username"] for p in page["players"]]
+
+
+def test_sightings_under_four_hours_after_a_meeting_starts_are_part_of_it(client):
     key = register(client)
-    snap(client, key, ["Shared", "OnlyFirst"], "2026-09-20T19:00:10Z", visit=V1, world="Hub")
-    snap(client, key, ["Shared", "OnlySecond"], "2026-09-21T15:41:10Z", visit=V2, world="Dwarven Mines")
+    # 10:00 starts a meeting; 11:00 and 13:59 fold into it; 14:00 starts the next (a fixed window from the start,
+    # not from the last sighting); 14:30 folds into that one.
+    for hour, minute in [(10, 0), (11, 0), (13, 59), (14, 0), (14, 30)]:
+        when = "2026-09-20T%02d:%02d:10Z" % (hour, minute)
+        snap(client, key, ["Hopper"], when, visit=when)
 
-    result = tree(client)
-    by_id = {n["id"]: n for n in result["nodes"]}
-    world_ids = {n["world"]: n["id"] for n in result["nodes"] if n["type"] == "world"}
-    player = {n["label"]: n["id"] for n in result["nodes"] if n["type"] == "player"}
-
-    assert by_id["me"]["label"] == ME and by_id["me"]["type"] == "me"
-    assert set(world_ids) == {"Hub", "Dwarven Mines"} and len(player) == 3
-    assert not any(n["type"] == "visit" for n in result["nodes"]), "dates are not nodes"
-
-    links = {(l["source"], l["target"]) for l in result["links"]}
-    assert all(("me", w) in links for w in world_ids.values())
-    assert {s for (s, t) in links if t == player["Shared"]} == set(world_ids.values()), "a player met in two worlds joins both"
-    assert {s for (s, t) in links if t == player["OnlyFirst"]} == {world_ids["Hub"]}
-    assert by_id[player["Shared"]]["times_seen"] == 2
-    assert by_id[player["Shared"]]["worlds"] == {"Hub": 1, "Dwarven Mines": 1}
-    assert result["has_more"] is False
+    hopper = search(client, "Hopper", exact="true")[0]
+    assert hopper["times_seen"] == 5, "every sighting is still stored"
+    assert hopper["meetings"] == 2
+    assert [m["count"] for m in hopper["meeting_list"]] == [2, 3]
+    assert hopper["meeting_list"][1]["start"] == "2026-09-20T10:00:10.000Z"
+    assert hopper["meeting_list"][1]["end"] == "2026-09-20T13:59:10.000Z"
+    assert search(client, "hopp", sightings="false")[0]["meetings"] == 2
+    assert players(client)["players"][0]["meetings"] == 2
 
 
-def test_a_player_met_in_two_visits_of_the_same_world_has_one_link_with_a_count(client):
+def test_a_meeting_lists_its_worlds_and_accounts(client):
+    key_a, key_b = register(client, UUID_A, ME), register(client, UUID_B, "AltAccount")
+    snap(client, key_a, ["Alice"], "2026-09-20T10:00:10Z", visit="2026-09-20T10:00:00Z", world="Hub")
+    snap(client, key_b, ["Alice"], "2026-09-20T10:30:10Z", visit="2026-09-20T10:30:00Z", world="The End", me="AltAccount")
+
+    meeting = search(client, "Alice", exact="true")[0]["meeting_list"][0]
+    assert meeting["worlds"] == ["Hub", "The End"]
+    assert meeting["accounts"] == [ME, "AltAccount"]
+    assert [s["world"] for s in meeting["sightings"]] == ["The End", "Hub"]
+
+
+def test_players_are_sorted_into_tiers_by_meetings(client):
     key = register(client)
-    snap(client, key, ["Alice"], "2026-09-20T19:00:10Z", visit=V1, world="Hub")
-    snap(client, key, ["Alice"], "2026-09-21T15:41:10Z", visit=V2, world="Hub")
+    days = {"Once": 1, "Twice": 2, "Three": 3, "Four": 4, "Five": 5}
+    for day in range(1, 6):
+        when = "2026-09-%02dT10:00:10Z" % day
+        snap(client, key, [n for n, d in days.items() if d >= day], when, visit=when)
 
-    result = tree(client)
-    alice = next(n["id"] for n in result["nodes"] if n.get("label") == "Alice")
-    links = [l for l in result["links"] if l["target"] == alice]
+    result = overview(client)
+    assert result["tiers"] == {"once": 1, "twice": 1, "recurring": 2, "regular": 1, "close": 0}
+    assert result["players"] == 5 and result["meetings"] == 15
+    assert names(players(client, tier="recurring")) == ["Four", "Three"]
+    assert names(players(client, tier="regular")) == ["Five"]
+    assert players(client, tier="once")["total"] == 1
 
-    assert links == [{"source": "w:Hub", "target": alice, "times": 2}]
-    hub = next(n for n in result["nodes"] if n["type"] == "world")
-    assert (hub["players"], hub["visits"]) == (1, 2)
 
-
-def test_world_nodes_count_their_players_and_visits(client):
+def test_tiers_can_be_counted_in_one_world(client):
     key = register(client)
-    snap(client, key, ["Alice", "Bob"], "2026-09-20T19:00:10Z", visit=V1, world="Hub")
-    snap(client, key, ["Bob", "Carol"], "2026-09-21T15:41:10Z", visit=V2, world="Hub")
-    snap(client, key, ["Dave"], "2026-09-21T16:41:10Z", visit="2026-09-21T16:41:00Z", world="The End")
+    snap(client, key, ["Alice", "Bob"], "2026-09-20T10:00:10Z", visit="2026-09-20T10:00:00Z", world="Hub")
+    snap(client, key, ["Alice"], "2026-09-21T10:00:10Z", visit="2026-09-21T10:00:00Z", world="The End")
 
-    worlds = {n["world"]: (n["players"], n["visits"]) for n in tree(client)["nodes"] if n["type"] == "world"}
-    assert worlds == {"Hub": (3, 2), "The End": (1, 1)}
+    hub = overview(client, world="hub")
+    assert hub["world"] == "hub" and hub["tiers"]["once"] == 2 and hub["tiers"]["twice"] == 0
+    assert overview(client)["tiers"]["twice"] == 1
+    alice = players(client, world="The End")["players"][0]
+    assert (alice["username"], alice["meetings"], alice["worlds"]) == ("Alice", 1, {"The End": 1})
+    assert players(client)["players"][0]["worlds"] == {"Hub": 1, "The End": 1}
 
 
-def test_the_tree_pages_backwards_through_players(client):
+def test_the_close_tier_is_players_partied_with_or_tagged(client):
+    key = register(client)
+    snap(client, key, ["Pal", "Rival", "Stranger"], V1, visit=V1, world="Hub")
+    client.post("/tracker/party", json={"me": ME, "players": ["Pal"], "timestamp": V2}, headers={"X-API-Key": key})
+    client.post("/tracker/frienemies", json={"name": "Rival", "tag": "enemy", "notes": "griefer"})
+    client.post("/tracker/frienemies", json={"name": "NeverMet", "tag": "friendly"})
+
+    assert overview(client)["tiers"]["close"] == 3
+    assert overview(client, world="Hub")["tiers"]["close"] == 2, "in one world, only players met there"
+    close = {p["username"]: p for p in players(client, tier="close", sort="name")["players"]}
+    assert sorted(close) == ["NeverMet", "Pal", "Rival"]
+    assert close["Pal"]["party_times"] == 1
+    assert close["Rival"]["tag"] == {"tag": "enemy", "notes": "griefer"}
+    assert close["NeverMet"]["meetings"] == 0
+
+
+def test_the_player_list_sorts_and_pages(client):
     key = register(client)
     for hour in range(5):
         start = "2026-09-20T%02d:00:00Z" % (10 + hour)
         snap(client, key, ["Player%d" % hour], "2026-09-20T%02d:00:10Z" % (10 + hour), visit=start)
 
-    page1 = tree(client, players=2)
-    page2 = tree(client, players=2, before=page1["next_before"])
-    page3 = tree(client, players=2, before=page2["next_before"])
-
-    names = lambda page: [n["label"] for n in page["nodes"] if n["type"] == "player"]
-    assert (names(page1), page1["has_more"]) == (["Player4", "Player3"], True)
-    assert (names(page2), page2["has_more"]) == (["Player2", "Player1"], True)
-    assert (names(page3), page3["has_more"]) == (["Player0"], False)
+    page1 = players(client, sort="last", limit=2)
+    page2 = players(client, sort="last", limit=2, offset=2)
+    assert (names(page1), page1["total"]) == (["Player4", "Player3"], 5)
+    assert names(page2) == ["Player2", "Player1"]
+    assert names(players(client, sort="first", limit=1)) == ["Player4"]
+    assert names(players(client, sort="name", limit=2)) == ["Player0", "Player1"]
 
 
-def test_a_player_met_again_moves_to_the_newest_page(client):
-    key = register(client)
-    snap(client, key, ["Old"], "2026-09-20T10:00:10Z", visit="2026-09-20T10:00:00Z")
-    snap(client, key, ["Mid"], "2026-09-20T11:00:10Z", visit="2026-09-20T11:00:00Z")
-    snap(client, key, ["Old"], "2026-09-20T12:00:10Z", visit="2026-09-20T12:00:00Z")
-
-    first = tree(client, players=1)
-    assert [n["label"] for n in first["nodes"] if n["type"] == "player"] == ["Old"]
-
-
-def test_each_account_has_its_own_tree(client):
+def test_each_account_has_its_own_players(client):
     key_a, key_b = register(client, UUID_A, ME), register(client, UUID_B, "AltAccount")
     snap(client, key_a, ["Shared", "OnlyMain"], V1, visit=V1)
     snap(client, key_b, ["Shared", "OnlyAlt"], V2, visit=V2, me="AltAccount")
 
-    main = tree(client)
-    alt = client.get("/tracker/tree", params={"owner": UUID_B}).json()
-
-    assert sorted(n["label"] for n in main["nodes"] if n["type"] == "player") == ["OnlyMain", "Shared"]
-    assert sorted(n["label"] for n in alt["nodes"] if n["type"] == "player") == ["OnlyAlt", "Shared"]
-    assert alt["nodes"][0]["label"] == "AltAccount"
+    assert sorted(names(players(client))) == ["OnlyMain", "Shared"]
+    assert sorted(names(players(client, owner=UUID_B))) == ["OnlyAlt", "Shared"]
+    assert sorted(names(players(client, owner="all"))) == ["OnlyAlt", "OnlyMain", "Shared"]
 
 
-def test_an_account_with_no_history_has_an_empty_tree(client):
-    result = tree(client)
-
-    assert [n["type"] for n in result["nodes"]] == ["me"]
-    assert result["links"] == [] and result["has_more"] is False
-    assert result["next_before"] is None
+def test_an_account_with_no_history_has_no_players(client):
+    result = overview(client)
+    assert result["players"] == 0 and result["worlds"] == []
+    assert players(client) == {"world": None, "tier": "all", "sort": "meetings", "total": 0, "offset": 0, "players": []}
 
 
-@pytest.mark.parametrize("params", [{"owner": "nope"}, {"players": 0},
-                                     {"players": app_module.TREE_MAX_PLAYERS + 1}, {"before": 0}])
-def test_the_tree_rejects_bad_input(client, params):
-    params = {"owner": UUID_A, **params}
-    assert client.get("/tracker/tree", params=params).status_code == 422
+@pytest.mark.parametrize("params", [{"owner": "nope"}, {"tier": "best"}, {"sort": "random"}, {"limit": 0},
+                                     {"limit": app_module.PLAYERS_MAX_LIMIT + 1}, {"offset": -1}])
+def test_the_player_list_rejects_bad_input(client, params):
+    assert client.get("/tracker/players", params={"owner": UUID_A, **params}).status_code == 422
 
 
-def test_the_tree_gives_a_cursor_for_the_live_feed(client):
+def test_the_overview_gives_a_cursor_for_the_live_feed(client):
     key = register(client)
     before = app_module._newest_sighting_id()
     snap(client, key, ["Alice", "Bob"], V1, visit=V1)
 
-    latest = tree(client)["latest_event_id"]
+    latest = overview(client)["latest_event_id"]
     assert latest == app_module._newest_sighting_id()
     assert latest > before, "the cursor moves forward when players are recorded"
     assert [e["username"] for e in app_module._tracker_events(before, UUID_A)] == ["Alice", "Bob"]
@@ -441,11 +457,12 @@ def test_a_large_history_is_fast(client):
         snap(client, key, ["Player%d_%d" % (visit, i) for i in range(100)], start, visit=start)
 
     started = time.time()
-    page = tree(client)
+    tiers = overview(client)["tiers"]
+    page = players(client, tier="once")
     took = time.time() - started
 
-    assert page["has_more"] is True
-    assert sum(1 for n in page["nodes"] if n["type"] == "player") == app_module.TREE_DEFAULT_PLAYERS
+    assert tiers["once"] == 6000 and page["total"] == 6000
+    assert len(page["players"]) == app_module.PLAYERS_DEFAULT_LIMIT
     assert took < 3, "took %.2fs" % took
 
 

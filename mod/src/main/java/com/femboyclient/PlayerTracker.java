@@ -33,8 +33,7 @@ public final class PlayerTracker {
 	/** How many names to show in the log line. The full list can be long. */
 	private static final int LOGGED_NAMES = 10;
 
-	private final LobbyWatcher watcher = new LobbyWatcher(this::report,
-			world -> FemboyClientConfig.get().scannerAllows(world));
+	private final LobbyWatcher watcher = new LobbyWatcher(this::report, world -> true);    // every world, always
 
 	private ClientLevel lastLevel;
 	private boolean warned;
@@ -45,12 +44,14 @@ public final class PlayerTracker {
 	private List<String> lastUnrecognised = List.of();
 	private ClientLevel worldLoggedFor;
 	private volatile String knownWorld;
+	private volatile int lastReported;
+	private volatile Instant lastReportedAt;
 
 	/** Called every client tick. Never throws. */
 	public void onClientTick(Minecraft mc) {
 		try {
 			FemboyClientConfig config = FemboyClientConfig.get();
-			if (!config.enabled || !config.scanner) {
+			if (!config.enabled) {
 				watcher.reset();
 				lastLevel = null;
 				return;
@@ -79,6 +80,16 @@ public final class PlayerTracker {
 		lastLevel = null;
 		worldLoggedFor = null;
 		knownWorld = null;
+	}
+
+	/** How many players the last report sent, for the G menu. */
+	public int lastReported() {
+		return lastReported;
+	}
+
+	/** When the last report was sent, or null if none yet this game. */
+	public Instant lastReportedAt() {
+		return lastReportedAt;
 	}
 
 	/** The world the scanner last found for this lobby, or null if none yet. Cheap: nothing is read. */
@@ -219,6 +230,9 @@ public final class PlayerTracker {
 			// Help correct the table: these lines might be an area name that is not in it.
 			LOGGER.info("scanner: could not tell the world. Sidebar text that might be the area: {}", lastUnrecognised);
 		}
+
+		lastReported = players.size();
+		lastReportedAt = now;
 
 		// A lobby can hold more names than one request allows, so send in chunks.
 		for (int from = 0; from < players.size(); from += TrackerPayload.MAX_PLAYERS) {

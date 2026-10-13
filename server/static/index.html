@@ -21,7 +21,7 @@
 <div class="accounts" id="accounts"><div class="no-accounts">Loading accounts…</div></div>
 
 <nav class="tabs" role="tablist" aria-label="Sections">
-  <button role="tab" id="tabBtnTracker" aria-selected="true">Lobby Networth</button>
+  <button role="tab" id="tabBtnTracker" aria-selected="true">Players</button>
   <button role="tab" id="tabBtnFinder" aria-selected="false">Player Finder</button>
   <button role="tab" id="tabBtnChats" aria-selected="false">Chat Logs</button>
   <button role="tab" id="tabBtnFrienemys" aria-selected="false">Frienemys</button>
@@ -39,31 +39,45 @@
     <span class="tk-live"><span class="dot" id="tkDot"></span><span id="tkLive">connecting…</span></span>
     <span class="tk-scanner" id="tkScanner"></span>
     <span class="tk-total" title="Different players you have met, in every world. A player met twice counts once.">Players met <b id="tkTotal">0</b><span class="tk-plus" id="tkPlus" aria-hidden="true"></span></span>
-    <span class="tk-stats" id="tkStats"></span>
   </div>
 
   <div class="tk-layout">
-    <div class="panel tk-graphpanel">
-      <div class="tk-worldbar" id="tkWorlds" aria-label="Filter by SkyBlock world"></div>
-      <div class="tk-links" id="tkLinks" hidden></div>
-      <div class="tk-graph" id="tkGraph"></div>
-      <div class="tk-graphbar">
-        <button class="tk-btn" id="tkMore" hidden>Load more players</button>
-        <button class="tk-btn" id="tkFit">Fit to screen</button>
-        <button class="tk-btn tk-danger" id="tkClear">Clear data…</button>
-        <span class="tk-note" id="tkNote"></span>
-        <span class="tk-legend" id="tkLegend"></span>
+    <div class="tk-main">
+      <div class="panel tk-overview">
+        <div class="tk-scope" id="tkScope"></div>
+        <div class="tk-map" id="tkMap" aria-label="SkyBlock worlds, sized by players met. Click one to look inside it."></div>
+        <div class="tk-tiers" id="tkTiers" role="group" aria-label="Players by how often you met them"></div>
       </div>
-      <div class="tk-clearbox" id="tkClearBox" hidden></div>
+
+      <div class="panel tk-listpanel">
+        <div class="tk-listhead">
+          <h2><span id="tkListTitle">Players</span> <small id="tkListCount"></small></h2>
+          <label class="tk-sortlabel">Sort
+            <select id="tkSort" aria-label="Sort the list">
+              <option value="meetings">Most met</option>
+              <option value="last">Last met</option>
+              <option value="first">First met</option>
+              <option value="name">Name</option>
+            </select>
+          </label>
+        </div>
+        <div class="tk-rowhead" aria-hidden="true"><span>Player</span><span>Met</span><span>Worlds</span><span></span><span>Last met</span></div>
+        <div class="tk-rows" id="tkRows" aria-live="polite"></div>
+        <div class="tk-listfoot">
+          <button class="tk-btn" id="tkMore" hidden>Show more</button>
+          <span class="tk-note" id="tkListNote"></span>
+          <button class="tk-btn tk-danger" id="tkClear">Clear data…</button>
+        </div>
+        <div class="tk-clearbox" id="tkClearBox" hidden></div>
+      </div>
     </div>
 
     <div class="tk-side">
-      <div class="panel">
-        <h2>Details</h2>
-        <div id="tkDetailsBody"><div class="empty">Search a player, or click a world or player in the graph.</div></div>
+      <div class="panel tk-details" id="tkDetails">
+        <div id="tkDetailsBody"><div class="empty">Loading…</div></div>
       </div>
-      <div class="panel">
-        <div class="tk-panelhead"><h2>Alert log</h2><button class="tk-btn" id="tkClearLog">Clear</button></div>
+      <div class="panel" id="tkAlertPanel" hidden>
+        <div class="tk-panelhead"><h2>Alert log <small id="tkAlertCount"></small></h2><button class="tk-btn" id="tkClearLog">Clear</button></div>
         <div class="tk-alertlog" id="tkAlertLog"></div>
       </div>
     </div>
@@ -251,7 +265,6 @@
 
 <script src="/static/core.js"></script>
 <script src="/static/app.js"></script>
-<script src="/static/graph.js"></script>
 <script src="/static/tracker.js"></script>
 <script src="/static/finder.js"></script>
 <script src="/static/chatlogs.js"></script>
