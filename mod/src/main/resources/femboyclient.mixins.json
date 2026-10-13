@@ -3,7 +3,9 @@
 	"package": "com.femboyclient.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
+		"ItemInHandRendererMixin",
 		"LightmapRenderStateExtractorMixin",
+		"LivingEntityMixin",
 		"ParticleEngineMixin"
 	],
 	"injectors": {

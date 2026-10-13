@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.function.IntConsumer;
 
 /**
  * The G menu: every module of the mod in one window. The list on the left has each module's name and its ON/OFF switch; the
@@ -33,10 +34,11 @@ public final class ClientMenuScreen extends Screen {
 	private static final int ROW_SWITCH_W = 30, ROW_SWITCH_H = 16;
 	private static final int PANE_SWITCH_W = 44, PANE_SWITCH_H = 20;
 	private static final int CONTROL_H = 20, LINE_GAP = 6;
+	private static final int SLIDER_H = 14, SLIDER_KNOB = 10;
 	private static final int MARGIN = 8;            // the least space kept between the window and the screen's edge
 
 	static final int MANSION = 0, SCANNER = 1, NPC = 2, LOBBY = 3, FRIENEMYS = 4, FULLBRIGHT = 5, KEEPSPRINT = 6, CLICKER = 7,
-			PARTICLES = 8;
+			PARTICLES = 8, HANDMAN = 9;
 
 	/** One module: its name, what it does, and its switch (null for the scanner, which is always on). */
 	private record Module(String name, String description, Function<FemboyClientConfig, Boolean> isOn,
@@ -89,7 +91,13 @@ public final class ClientMenuScreen extends Screen {
 					}),
 			new Module("No Particles", "Hides every particle: block breaking, mobs and creatures, hits, explosions, potions, rain "
 					+ "and abilities. Only what you see changes.",
-					c -> c.noParticles, NoParticles::set));
+					c -> c.noParticles, NoParticles::set),
+			new Module("HandMan", "Changes the size, position, rotation and swing speed of your hand and held item. Only what you "
+					+ "see changes.",
+					c -> c.handMan, (c, on) -> {
+						c.handMan = on;
+						c.save();
+					}));
 
 	/** The module selected last time, so the menu reopens on it (also after Esc on one of the big screens). */
 	private static int selected = 0;
@@ -98,7 +106,21 @@ public final class ClientMenuScreen extends Screen {
 	private record Hit(int x0, int y0, int x1, int y1, Runnable left, Runnable right) {
 	}
 
+	/** A slider: its name, the knob's left and right ends, the values at them, and where a new value goes. */
+	private record Slider(String name, int x0, int x1, int min, int max, int step, IntConsumer set) {
+		void setFrom(double x) {
+			double t = Math.max(0, Math.min(1, (x - x0) / Math.max(1, x1 - x0)));
+			int value = min + (int) Math.round(t * (max - min) / step) * step;
+			set.accept(Math.max(min, Math.min(max, value)));
+		}
+	}
+
+	private record SliderHit(int x0, int y0, int x1, int y1, Slider slider) {
+	}
+
 	private final List<Hit> hits = new ArrayList<>();
+	private final List<SliderHit> sliderHits = new ArrayList<>();
+	private Slider dragging;
 	private final Map<String, int[]> named = new HashMap<>();
 	private final Map<String, UiFont.Label> labels = new HashMap<>();
 	private final Map<String, List<FormattedCharSequence>> wrapped = new HashMap<>();
@@ -157,6 +179,7 @@ public final class ClientMenuScreen extends Screen {
 		this.mouseX = mouseX;
 		this.mouseY = mouseY;
 		hits.clear();
+		sliderHits.clear();
 		named.clear();
 		UiDraw.setScale(minecraft.getWindow().getGuiScale());
 		UiDraw.setFade(Ease.inOutCubic((System.nanoTime() - openedAt) / 1_000_000f / Theme.OPEN_MS));
@@ -270,6 +293,7 @@ public final class ClientMenuScreen extends Screen {
 			case FRIENEMYS -> frienemySettings();
 			case CLICKER -> clickerSettings(config);
 			case PARTICLES -> particleSettings();
+			case HANDMAN -> handManSettings(config);
 			default -> {
 			}
 		}
@@ -281,8 +305,8 @@ public final class ClientMenuScreen extends Screen {
 
 	private void mansionSettings(FemboyClientConfig config) {
 		section("Map");
-		stepper("Map size", config.hudSize + " px",
-				() -> resizeMap(config, -10), () -> resizeMap(config, 10));
+		slider("Map size", config.hudSize + " px", config.hudSize, HollowsHud.MIN_SIZE, HollowsHud.MAX_SIZE, 10,
+				v -> config.hudSize = v);
 		switchRow("Render boost", "Biggest view distance in the Crystal Hollows, so every chunk is scanned.", config.scanRenderBoost,
 				() -> {
 					config.scanRenderBoost = !config.scanRenderBoost;
@@ -291,11 +315,6 @@ public final class ClientMenuScreen extends Screen {
 		buttons(new String[] {"Edit map position", "Reset position"},
 				new Runnable[] {() -> minecraft.setScreenAndShow(new HollowsMapScreen().fromMenu()), () -> HollowsMap.reset(config)});
 		info("Position", config.hudX + ", " + config.hudY);
-	}
-
-	private static void resizeMap(FemboyClientConfig config, int by) {
-		config.hudSize = clamp(config.hudSize + by, HollowsHud.MIN_SIZE, HollowsHud.MAX_SIZE);
-		config.save();
 	}
 
 	private void scannerSettings() {
@@ -335,8 +354,8 @@ public final class ClientMenuScreen extends Screen {
 
 	private void clickerSettings(FemboyClientConfig config) {
 		section("Clicking");
-		stepper("Time between clicks", config.clickerMs + " ms",
-				() -> setClickerMs(config, config.clickerMs - 10), () -> setClickerMs(config, config.clickerMs + 10));
+		slider("Time between clicks", config.clickerMs + " ms", config.clickerMs, LoopedClicker.MIN_MS, LoopedClicker.MAX_MS, 10,
+				v -> config.clickerMs = v);
 		chips("Button", new String[] {"Left", "Right"}, config.clickerRightClick ? 1 : 0, choice -> {
 			config.clickerRightClick = choice == 1;
 			config.save();
@@ -352,14 +371,42 @@ public final class ClientMenuScreen extends Screen {
 				+ "\"Set Location\" in the controls on a container.", Theme.TEXT_DIM);
 	}
 
-	private static void setClickerMs(FemboyClientConfig config, int ms) {
-		config.clickerMs = clamp(ms, LoopedClicker.MIN_MS, LoopedClicker.MAX_MS);
-		config.save();
-	}
-
 	private void particleSettings() {
 		section("Now");
 		info("Particles hidden this game", String.format("%,d", NoParticles.blockedCount()));
+	}
+
+	private void handManSettings(FemboyClientConfig config) {
+		section("Size");
+		slider("Size", HandMan.percent(config.handSize), config.handSize, HandMan.SIZE, v -> config.handSize = v);
+		section("Position");
+		slider("X", HandMan.offset(config.handX), config.handX, HandMan.X, v -> config.handX = v);
+		slider("Y", HandMan.offset(config.handY), config.handY, HandMan.Y, v -> config.handY = v);
+		slider("Z", HandMan.offset(config.handZ), config.handZ, HandMan.Z, v -> config.handZ = v);
+		section("Rotation");
+		slider("Yaw", config.handYaw + "°", config.handYaw, HandMan.ROTATION, v -> config.handYaw = v);
+		slider("Pitch", config.handPitch + "°", config.handPitch, HandMan.ROTATION, v -> config.handPitch = v);
+		slider("Roll", config.handRoll + "°", config.handRoll, HandMan.ROTATION, v -> config.handRoll = v);
+		section("Swing");
+		slider("Speed", HandMan.percent(config.handSpeed), config.handSpeed, HandMan.SPEED, v -> config.handSpeed = v);
+		handSwitch("Ignore Haste", "The speed above is used as it is, without Haste or Mining Fatigue changing it.",
+				config.handIgnoreHaste, (c, on) -> c.handIgnoreHaste = on);
+		handSwitch("Block Hit", "The 1.7 look: your item keeps swinging while you block.",
+				config.handBlockHit, (c, on) -> c.handBlockHit = on);
+		handSwitch("No Equip Reset", "No dip down and back up when you switch items.",
+				config.handNoEquipReset, (c, on) -> c.handNoEquipReset = on);
+		handSwitch("No Swing", "Your item never swings forward.", config.handNoSwing, (c, on) -> c.handNoSwing = on);
+		handSwitch("No Block", "Blocking does not raise your item.", config.handNoBlock, (c, on) -> c.handNoBlock = on);
+		buttons(new String[] {"Reset"}, new Runnable[] {() -> HandMan.reset(config)});
+		paragraph("Reset puts every setting above back to the game's own look.", Theme.TEXT_DIM);
+	}
+
+	private void handSwitch(String name, String hint, boolean on, BiConsumer<FemboyClientConfig, Boolean> set) {
+		switchRow(name, hint, on, () -> {
+			FemboyClientConfig config = FemboyClientConfig.get();
+			set.accept(config, !on);
+			config.save();
+		});
 	}
 
 	// ------------------------------------------------------------ pane building blocks
@@ -414,21 +461,36 @@ public final class ClientMenuScreen extends Screen {
 		cy = Math.max(cy, sy1) + LINE_GAP;
 	}
 
-	/** "Name      [−] value [+]" */
-	private void stepper(String name, String value, Runnable minus, Runnable plus) {
-		UiDraw.text(g, font, UiFont.sequence(name, UiFont.Face.STRONG), paneX0, UiFont.centeredY(UiFont.Face.STRONG, cy, CONTROL_H), Theme.TEXT);
-		int valueW = Math.max(56, UiFont.width(font, value, UiFont.Face.STRONG) + 12);
-		int px1 = paneX1, px0 = px1 - CONTROL_H;
-		int vx1 = px0 - 4, vx0 = vx1 - valueW;
-		int mx1 = vx0 - 4, mx0 = mx1 - CONTROL_H;
-		smallButton("−", mx0, cy, mx1, cy + CONTROL_H, minus);
-		UiDraw.card(g, vx0, cy, vx1, cy + CONTROL_H, Theme.ROW_RADIUS, Theme.CARD_FILL, Theme.CARD_BORDER);
-		UiDraw.text(g, font, UiFont.sequence(value, UiFont.Face.STRONG), vx0 + (valueW - UiFont.width(font, value, UiFont.Face.STRONG)) / 2,
-				UiFont.centeredY(UiFont.Face.STRONG, cy, CONTROL_H), Theme.TEXT);
-		smallButton("+", px0, cy, px1, cy + CONTROL_H, plus);
-		named.put("minus:" + name, new int[] {mx0, cy, mx1, cy + CONTROL_H});
-		named.put("plus:" + name, new int[] {px0, cy, px1, cy + CONTROL_H});
-		cy += CONTROL_H + LINE_GAP;
+	/** A slider for a HandMan number: its range and step come from the setting. */
+	private void slider(String name, String value, int current, HandMan.Range range, IntConsumer set) {
+		slider(name, value, current, range.min(), range.max(), range.step(), set);
+	}
+
+	/**
+	 * "Name ............ value" with a slider under it, the full width of the pane. Click or drag anywhere on it; the value
+	 * snaps to {@code step} and is saved when the mouse button is let go.
+	 */
+	private void slider(String name, String value, int current, int min, int max, int step, IntConsumer set) {
+		UiDraw.text(g, font, UiFont.sequence(name, UiFont.Face.STRONG), paneX0, UiFont.topY(UiFont.Face.STRONG, cy), Theme.TEXT);
+		UiDraw.text(g, font, UiFont.sequence(value, UiFont.Face.STRONG), paneX1 - UiFont.width(font, value, UiFont.Face.STRONG),
+				UiFont.topY(UiFont.Face.STRONG, cy), Theme.ACCENT_LIGHT);
+		cy += UiFont.capHeight(UiFont.Face.STRONG) + 6;
+
+		int x0 = paneX0 + SLIDER_KNOB / 2, x1 = paneX1 - SLIDER_KNOB / 2, mid = cy + SLIDER_H / 2;
+		Slider slider = new Slider(name, x0, x1, min, max, step, set);
+		boolean hot = dragging != null ? dragging.name().equals(name) : UiDraw.inside(mouseX, mouseY, paneX0, cy, paneX1, cy + SLIDER_H) && inPane();
+		int knobX = x0 + Math.round((x1 - x0) * (float) (clamp(current, min, max) - min) / Math.max(1, max - min));
+		UiDraw.pill(g, x0 - 2, mid - 2, x1 + 2, mid + 2, Colors.withAlpha(Theme.SWITCH_OFF, hot ? 235 : 195));
+		UiDraw.pill(g, x0 - 2, mid - 2, knobX + 2, mid + 2, Colors.withAlpha(Theme.ACCENT, hot ? 255 : 215));
+		int r = SLIDER_KNOB / 2;
+		UiDraw.pill(g, knobX - r, mid - r, knobX + r, mid + r, Colors.withAlpha(Theme.TEXT, hot ? 255 : 225));
+
+		int top = Math.max(cy, paneY0), bottom = Math.min(cy + SLIDER_H, paneY1);     // cut to the visible pane, like hit()
+		if (top < bottom) {
+			sliderHits.add(new SliderHit(paneX0, top, paneX1, bottom, slider));
+		}
+		named.put("slider:" + name, new int[] {paneX0, cy, paneX1, cy + SLIDER_H});
+		cy += SLIDER_H + LINE_GAP + 2;
 	}
 
 	/** "Name      [A] [B]": one of a few options, the chosen one in the accent. */
@@ -477,14 +539,6 @@ public final class ClientMenuScreen extends Screen {
 			x0 = x1 + 6;
 		}
 		cy += CONTROL_H + LINE_GAP;
-	}
-
-	private void smallButton(String text, int x0, int y0, int x1, int y1, Runnable action) {
-		boolean hover = UiDraw.inside(mouseX, mouseY, x0, y0, x1, y1) && inPane();
-		UiDraw.hoverCard(g, x0, y0, x1, y1, Theme.ROW_RADIUS, hover);
-		UiDraw.text(g, font, UiFont.sequence(text, UiFont.Face.STRONG), x0 + (x1 - x0 - UiFont.width(font, text, UiFont.Face.STRONG)) / 2,
-				UiFont.centeredY(UiFont.Face.STRONG, y0, y1 - y0), hover ? Theme.ACCENT_LIGHT : Theme.TEXT);
-		hit(x0, y0, x1, y1, action, null);
 	}
 
 	/** A small pill with an ALL-CAPS word, right-aligned to {@code right} and centred on {@code midY}. */
@@ -537,6 +591,16 @@ public final class ClientMenuScreen extends Screen {
 
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+		if (event.button() == 0) {
+			for (SliderHit hit : sliderHits) {
+				if (UiDraw.inside(event.x(), event.y(), hit.x0(), hit.y0(), hit.x1(), hit.y1())) {
+					bindingKey = false;
+					dragging = hit.slider();
+					dragging.setFrom(event.x());
+					return true;
+				}
+			}
+		}
 		if (event.button() == 0 || event.button() == 1) {
 			// The switch is drawn on top of its row, and was added first, so it wins.
 			for (Hit hit : hits) {
@@ -554,6 +618,34 @@ public final class ClientMenuScreen extends Screen {
 		}
 		bindingKey = false;
 		return super.mouseClicked(event, doubleClick);
+	}
+
+	@Override
+	public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
+		if (dragging != null) {
+			dragging.setFrom(event.x());
+			return true;
+		}
+		return super.mouseDragged(event, dx, dy);
+	}
+
+	@Override
+	public boolean mouseReleased(MouseButtonEvent event) {
+		if (dragging != null) {
+			dragging = null;
+			FemboyClientConfig.get().save();
+			return true;
+		}
+		return super.mouseReleased(event);
+	}
+
+	@Override
+	public void removed() {
+		if (dragging != null) {
+			dragging = null;
+			FemboyClientConfig.get().save();
+		}
+		super.removed();
 	}
 
 	@Override
@@ -635,7 +727,7 @@ public final class ClientMenuScreen extends Screen {
 
 	// ------------------------------------------------------------ for the screenshot tests
 
-	/** The module selected now (index into the list: {@link #MANSION} to {@link #PARTICLES}). */
+	/** The module selected now (index into the list: {@link #MANSION} to {@link #HANDMAN}). */
 	public int selected() {
 		return selected;
 	}
@@ -662,7 +754,7 @@ public final class ClientMenuScreen extends Screen {
 
 	/**
 	 * The bounds {x0, y0, x1, y1} of a control in the pane as last drawn, or null: "button:Open lobby list",
-	 * "switch:Render boost", "minus:Map size", "plus:Time between clicks", "chip:Right", "pane-switch".
+	 * "switch:Render boost", "slider:Map size", "chip:Right", "pane-switch".
 	 */
 	public int[] controlBounds(String name) {
 		return named.get(name);
