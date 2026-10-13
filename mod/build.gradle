@@ -46,6 +46,13 @@ dependencies {
 	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
+	// The server list's proxy (ProxyHandlers): Netty's SOCKS4/SOCKS5/HTTP proxy handlers, bundled in the jar because
+	// Minecraft ships the rest of Netty but not these two. 4.2.7 is the Netty that Minecraft 26.1.2 ships (26.2 has 4.2.15).
+	implementation "io.netty:netty-handler-proxy:${project.netty_version}"
+	implementation "io.netty:netty-codec-socks:${project.netty_version}"
+	include("io.netty:netty-handler-proxy:${project.netty_version}") { transitive = false }
+	include("io.netty:netty-codec-socks:${project.netty_version}") { transitive = false }
+
 	// Unit tests (run with: gradlew test).
 	testImplementation platform('org.junit:junit-bom:6.1.3')
 	testImplementation 'org.junit.jupiter:junit-jupiter'

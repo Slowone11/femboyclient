@@ -231,6 +231,7 @@ public class FemboyClientMod implements ClientModInitializer {
 		ChestEsp.register();
 		PuzzleSolvers.register();
 		ChatCommands.register();
+		ProxyButton.register();
 		net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry.addLast(
 				net.minecraft.resources.Identifier.fromNamespaceAndPath(MOD_ID, "server_display"), ServerDisplay::extract);
 

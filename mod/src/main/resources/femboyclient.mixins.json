@@ -6,6 +6,7 @@
 		"BlockStateBaseMixin",
 		"CameraMixin",
 		"ClientPacketListenerMixin",
+		"ConnectionChannelMixin",
 		"EntityMixin",
 		"EntityRenderDispatcherMixin",
 		"ItemInHandRendererMixin",

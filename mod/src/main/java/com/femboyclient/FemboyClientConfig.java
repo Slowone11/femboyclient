@@ -212,6 +212,18 @@ public final class FemboyClientConfig {
 	/** How wide and tall the map itself is, in GUI pixels. */
 	public int hudSize = 150;
 
+	/**
+	 * The proxy for Minecraft server connections, set from the Proxy button on the server list (see {@link ProxyScreen}).
+	 * Off means every server is joined directly. The website connection never goes through it. proxyPassword is a
+	 * password: like enrollSecret, it is stored in this file as plain text.
+	 */
+	public boolean proxyEnabled = false;
+	public String proxyType = "SOCKS5";
+	public String proxyHost = "";
+	public int proxyPort = 1080;
+	public String proxyUsername = "";
+	public String proxyPassword = "";
+
 	private static FemboyClientConfig instance;
 
 	/** The one shared config, loaded on first use. Safe to call from any thread. */
@@ -426,7 +438,19 @@ public final class FemboyClientConfig {
 		clickerPanelY = integer(props, "clickerPanelY", clickerPanelY);
 		hudX = Math.max(0, integer(props, "hudX", hudX));
 		hudY = Math.max(0, integer(props, "hudY", hudY));
-		hudSize = Math.max(HollowsHud.MIN_SIZE, Math.min(HollowsHud.MAX_SIZE, integer(props, "hudSize", hudSize)));	}
+		hudSize = Math.max(HollowsHud.MIN_SIZE, Math.min(HollowsHud.MAX_SIZE, integer(props, "hudSize", hudSize)));
+		proxyEnabled = bool(props, "proxyEnabled", proxyEnabled);
+		proxyType = ProxySettings.Type.parse(text(props, "proxyType", proxyType, false)).name();
+		proxyHost = text(props, "proxyHost", proxyHost, true);
+		proxyPort = integer(props, "proxyPort", proxyPort);
+		proxyUsername = text(props, "proxyUsername", proxyUsername, true);
+		proxyPassword = text(props, "proxyPassword", proxyPassword, true);
+	}
+
+	/** The proxy settings as one value, whether or not the proxy is switched on. */
+	public ProxySettings proxy() {
+		return new ProxySettings(ProxySettings.Type.parse(proxyType), proxyHost, proxyPort, proxyUsername, proxyPassword);
+	}
 
 	/** Defaults built into the jar, or empty if this build has none. */
 	private static Properties readBundledDefaults() {
@@ -557,7 +581,14 @@ public final class FemboyClientConfig {
 		props.setProperty("clickerPanelY", Integer.toString(clickerPanelY));
 		props.setProperty("hudX", Integer.toString(hudX));
 		props.setProperty("hudY", Integer.toString(hudY));
-		props.setProperty("hudSize", Integer.toString(hudSize));		return props;
+		props.setProperty("hudSize", Integer.toString(hudSize));
+		props.setProperty("proxyEnabled", Boolean.toString(proxyEnabled));
+		props.setProperty("proxyType", proxyType);
+		props.setProperty("proxyHost", proxyHost);
+		props.setProperty("proxyPort", Integer.toString(proxyPort));
+		props.setProperty("proxyUsername", proxyUsername);
+		props.setProperty("proxyPassword", proxyPassword);
+		return props;
 	}
 
 	/** Writes the current values back to disk. A temp file is swapped in, so a crash cannot leave half a file. */
