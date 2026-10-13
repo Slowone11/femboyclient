@@ -2,6 +2,7 @@ package com.femboyclient.mixin;
 
 import com.femboyclient.FemboyClientConfig;
 import com.femboyclient.HandMan;
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.renderer.ItemInHandRenderer;
@@ -15,7 +16,6 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
@@ -52,11 +52,15 @@ public abstract class ItemInHandRendererMixin {
 		return HandMan.active() && FemboyClientConfig.get().handNoEquipReset ? 0F : equip;
 	}
 
-	/** No Block: an item held up to block (a sword or a shield) is drawn as if it were not, so it swings normally instead. */
-	@Redirect(method = "submitArmWithItem", require = 0,
+	/**
+	 * No Block: an item held up to block (a sword or a shield) is drawn as if it were not, so it swings normally instead.
+	 * Not a @Redirect: MixinExtras 0.5.4 crashes the game while loading any @Redirect in this class ("ArrayList cannot be
+	 * cast to AnnotationNode").
+	 */
+	@ModifyExpressionValue(method = "submitArmWithItem", require = 0,
 			at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/AbstractClientPlayer;isUsingItem()Z"))
-	private boolean femboyclient$handManNoBlock(AbstractClientPlayer player) {
-		return player.isUsingItem() && !(noBlock() && player.getUseItem().getUseAnimation() == ItemUseAnimation.BLOCK);
+	private boolean femboyclient$handManNoBlock(boolean using, AbstractClientPlayer player) {
+		return using && !(noBlock() && player.getUseItem().getUseAnimation() == ItemUseAnimation.BLOCK);
 	}
 
 	/**
