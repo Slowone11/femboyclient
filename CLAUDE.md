@@ -27,6 +27,7 @@ gradlew runClientGametest                    # in-game client gametests (src/gam
 Website (run from `server/`):
 
 ```
+python -m venv .venv && .venv\Scripts\pip install -r requirements-dev.txt   # first-time setup
 server.bat                                   # http://127.0.0.1:8000 (also: lan | forever | autostart)
 .venv\Scripts\python.exe -m pytest           # all tests
 .venv\Scripts\python.exe -m pytest tests/test_api.py::test_name   # one test
@@ -49,7 +50,10 @@ server.bat                                   # http://127.0.0.1:8000 (also: lan 
 - Pushing to `main` with changes under `mod/` runs `.github/workflows/mod-release.yml`. It builds the jar with `gradlew build` (unit tests gate it) and publishes it as release `build-<n>`, and every game installs it. Nothing deploys the website.
 - CI bakes in the repo secret `MOD_DEFAULTS_PROPERTIES`, a copy of the whole `mod/defaults.local.properties`. After editing that file (for example a renewed token), run `gh secret set MOD_DEFAULTS_PROPERTIES < defaults.local.properties` from `mod/`.
 - A jar copied into a game by hand is replaced by the latest release on the next check. Test local changes with `gradlew runClient`.
-- `gradlew` needs JDK 25. This PC has no JAVA_HOME set; the JDK is at `C:\Users\tavmo\Downloads\zulu25.36.205-ca-jdk25.0.4.1-win_x64\zulu25.36.205-ca-jdk25.0.4.1-win_x64`.
+- `gradlew` needs JDK 25. This PC has no JAVA_HOME set; set it first (PowerShell):
+  ```
+  $env:JAVA_HOME="C:\Users\tavmo\Downloads\zulu25.36.205-ca-jdk25.0.4.1-win_x64\zulu25.36.205-ca-jdk25.0.4.1-win_x64"
+  ```
 - UI: `Theme` holds every color, size and timing. `UiDraw` + `Shapes` draw anti-aliased rounded shapes at real screen resolution, with coordinates in GUI pixels. Font sizes in `Theme` must match `assets/femboyclient/font/*.json` (a test checks this).
 - Saved screen positions (overlay panels, click spots) are in GUI pixels, so they depend on the GUI scale and window size. Clamp them into the screen when drawing.
 
@@ -57,7 +61,7 @@ server.bat                                   # http://127.0.0.1:8000 (also: lan 
 
 - `app.py` is a single FastAPI app (about 4000 lines) on SQLite (`femboyclient.db`). The module docstring lists the main endpoints. Mod-facing writes need `X-API-Key`; `/register` needs `X-Enroll-Secret`. Keys and the secret live in `config.json`.
 - Live updates go to the page as server-sent events (`/live`, `/tracker/live`).
-- `static/` is a plain-JS front end. `index.html` loads `core.js`, `app.js`, `tracker.js`, `finder.js`, `chatlogs.js`, `frienemys.js`, `hollows.js`, `live.js` in that order. `/` adds a `?v=<hash>` cache-buster to every static file.
+- `static/` is a plain-JS front end. `index.html` loads `core.js`, `app.js`, `tracker.js`, `finder.js`, `chatlogs.js`, `frienemys.js`, `live.js` in that order. `/` adds a `?v=<hash>` cache-buster to every static file.
 - Networth: `app.py` downloads the profile itself and runs `networth/networth.js` (Node, SkyHelper-Networth) as a subprocess, JSON over stdin/stdout.
 - Tests: `tests/conftest.py` points `FEMBOYCLIENT_DB` / `FEMBOYCLIENT_CONFIG` at a temp folder before importing `app`, and the `client` fixture empties every table per test. Tests monkeypatch many names on the `app` module, which is why `app.py` has not been split.
 
