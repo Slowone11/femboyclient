@@ -122,6 +122,16 @@ public final class FemboyClientConfig {
 	public boolean noParticles = false;
 
 	/**
+	 * HandMan: changes the size, position, rotation and swing speed of your first-person hand and held item (see HandMan).
+	 * Off by default. Numbers are hundredths (degrees for yaw, pitch and roll); 0 everywhere is the game's own look.
+	 */
+	public boolean handMan = false;
+	public int handSize = 0, handX = 0, handY = 0, handZ = 0;
+	public int handYaw = 0, handPitch = 0, handRoll = 0;
+	public int handSpeed = 0;
+	public boolean handIgnoreHaste = false, handBlockHit = false, handNoEquipReset = false, handNoSwing = false, handNoBlock = false;
+
+	/**
 	 * The Looped Clicker module: shows click controls whenever a container is open (see
 	 * {@link LoopedClickerOverlay}). Off by default. Switching it on in the G menu only makes the controls
 	 * appear — the loop never starts on its own. Fields keep their original "clicker" names so a config file
@@ -269,6 +279,20 @@ public final class FemboyClientConfig {
 		fullbright = bool(props, "fullbright", fullbright);
 		keepsprint = bool(props, "keepsprint", keepsprint);
 		noParticles = bool(props, "noParticles", noParticles);
+		handMan = bool(props, "handMan", handMan);
+		handSize = HandMan.SIZE.clamp(integer(props, "handSize", handSize));
+		handX = HandMan.X.clamp(integer(props, "handX", handX));
+		handY = HandMan.Y.clamp(integer(props, "handY", handY));
+		handZ = HandMan.Z.clamp(integer(props, "handZ", handZ));
+		handYaw = HandMan.ROTATION.clamp(integer(props, "handYaw", handYaw));
+		handPitch = HandMan.ROTATION.clamp(integer(props, "handPitch", handPitch));
+		handRoll = HandMan.ROTATION.clamp(integer(props, "handRoll", handRoll));
+		handSpeed = HandMan.SPEED.clamp(integer(props, "handSpeed", handSpeed));
+		handIgnoreHaste = bool(props, "handIgnoreHaste", handIgnoreHaste);
+		handBlockHit = bool(props, "handBlockHit", handBlockHit);
+		handNoEquipReset = bool(props, "handNoEquipReset", handNoEquipReset);
+		handNoSwing = bool(props, "handNoSwing", handNoSwing);
+		handNoBlock = bool(props, "handNoBlock", handNoBlock);
 		clicker = bool(props, "clicker", clicker);
 		clickerRightClick = bool(props, "clickerRightClick", clickerRightClick);
 		clickerMs = Math.max(LoopedClicker.MIN_MS, Math.min(LoopedClicker.MAX_MS, integer(props, "clickerMs", clickerMs)));
@@ -312,6 +336,20 @@ public final class FemboyClientConfig {
 		props.setProperty("fullbright", Boolean.toString(fullbright));
 		props.setProperty("keepsprint", Boolean.toString(keepsprint));
 		props.setProperty("noParticles", Boolean.toString(noParticles));
+		props.setProperty("handMan", Boolean.toString(handMan));
+		props.setProperty("handSize", Integer.toString(handSize));
+		props.setProperty("handX", Integer.toString(handX));
+		props.setProperty("handY", Integer.toString(handY));
+		props.setProperty("handZ", Integer.toString(handZ));
+		props.setProperty("handYaw", Integer.toString(handYaw));
+		props.setProperty("handPitch", Integer.toString(handPitch));
+		props.setProperty("handRoll", Integer.toString(handRoll));
+		props.setProperty("handSpeed", Integer.toString(handSpeed));
+		props.setProperty("handIgnoreHaste", Boolean.toString(handIgnoreHaste));
+		props.setProperty("handBlockHit", Boolean.toString(handBlockHit));
+		props.setProperty("handNoEquipReset", Boolean.toString(handNoEquipReset));
+		props.setProperty("handNoSwing", Boolean.toString(handNoSwing));
+		props.setProperty("handNoBlock", Boolean.toString(handNoBlock));
 		props.setProperty("clicker", Boolean.toString(clicker));
 		props.setProperty("clickerRightClick", Boolean.toString(clickerRightClick));
 		props.setProperty("clickerMs", Integer.toString(clickerMs));
