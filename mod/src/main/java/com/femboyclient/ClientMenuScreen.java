@@ -38,7 +38,14 @@ public final class ClientMenuScreen extends Screen {
 	private static final int MARGIN = 8;            // the least space kept between the window and the screen's edge
 
 	static final int MANSION = 0, SCANNER = 1, NPC = 2, LOBBY = 3, FRIENEMYS = 4, FULLBRIGHT = 5, KEEPSPRINT = 6, CLICKER = 7,
-			PARTICLES = 8, HANDMAN = 9;
+			PARTICLES = 8, HANDMAN = 9, COPY_CHAT = 10, HIDE_PLAYERS = 11, CHEST_ESP = 12, GHOST_BLOCKS = 13, KEY_HIGHLIGHT = 14,
+			TEAMMATES = 15, SECRET_HITBOXES = 16, PUZZLES = 17, CAMERA = 18, SERVER_DISPLAY = 19, CHAT_COMMANDS = 20, NO_DEBUFF = 21;
+
+	/** The tabs above the module list. All lists every module; Dungeons only the dungeon ones. */
+	private static final String[] TABS = {"All", "Dungeons"};
+	private static final java.util.Set<Integer> DUNGEON_MODULES = java.util.Set.of(GHOST_BLOCKS, KEY_HIGHLIGHT, TEAMMATES,
+			SECRET_HITBOXES, PUZZLES);
+	private static final int TAB_H = 20;
 
 	/** One module: its name, what it does, and its switch (null for the scanner, which is always on). */
 	private record Module(String name, String description, Function<FemboyClientConfig, Boolean> isOn,
@@ -75,7 +82,7 @@ public final class ClientMenuScreen extends Screen {
 						c.fullbright = on;
 						c.save();
 					}),
-			new Module("Keepsprint", "Sprints while you move in any direction, not just forward like vanilla.",
+			new Module("Auto Sprint", "Automatically makes you sprint.",
 					c -> c.keepsprint, (c, on) -> {
 						c.keepsprint = on;
 						c.save();
@@ -96,6 +103,66 @@ public final class ClientMenuScreen extends Screen {
 					+ "see changes.",
 					c -> c.handMan, (c, on) -> {
 						c.handMan = on;
+						c.save();
+					}),
+			new Module("Copy Chat", "Allows you to right click messages in chat to copy them.",
+					c -> c.copyChat, (c, on) -> {
+						c.copyChat = on;
+						c.save();
+					}),
+			new Module("Hide Players", "Hides players.",
+					c -> c.hidePlayers, (c, on) -> {
+						c.hidePlayers = on;
+						c.save();
+					}),
+			new Module("Chest ESP", "Renders chams or the bounding box for all chests.",
+					c -> c.chestEsp, (c, on) -> {
+						c.chestEsp = on;
+						c.save();
+					}),
+			new Module("Ghost Blocks", "Creates ghost blocks on key press, and in specific locations.",
+					c -> c.ghostBlocks, (c, on) -> {
+						c.ghostBlocks = on;
+						c.save();
+					}),
+			new Module("Key Highlight", "Draws a box around the key.",
+					c -> c.keyHighlight, (c, on) -> {
+						c.keyHighlight = on;
+						c.save();
+					}),
+			new Module("Teammate Highlight", "Enhances visibility of your dungeon teammates and their name tags.",
+					c -> c.teammatesHighlight, (c, on) -> {
+						c.teammatesHighlight = on;
+						c.save();
+					}),
+			new Module("Secret Hitboxes", "Full block Secret hitboxes.",
+					c -> c.secretHitboxes, (c, on) -> {
+						c.secretHitboxes = on;
+						c.save();
+					}),
+			new Module("Puzzle Solvers", "Dungeon puzzle solvers.",
+					c -> c.puzzleSolvers, (c, on) -> {
+						c.puzzleSolvers = on;
+						c.save();
+					}),
+			new Module("Camera", "Allows you to change qualities about third person view.",
+					c -> c.camera, (c, on) -> {
+						c.camera = on;
+						c.save();
+					}),
+			new Module("Server Display", "Displays your current ping and the server's TPS.",
+					c -> c.serverDisplay, (c, on) -> {
+						c.serverDisplay = on;
+						c.save();
+					}),
+			new Module("Chat Commands", "Type !help in the corresponding channel for cmd list. Use /blacklist.",
+					c -> c.chatCommands, (c, on) -> {
+						c.chatCommands = on;
+						c.save();
+					}),
+			new Module("No Debuff", "Disables certain debuffs.",
+					c -> c.noDebuff, (c, on) -> {
+						c.noDebuff = on;
 						c.save();
 					}));
 
@@ -130,7 +197,12 @@ public final class ClientMenuScreen extends Screen {
 	private int listX0, listX1, listY0, listY1;
 	private int paneX0, paneX1, paneY0, paneY1;
 	private int listScroll, paneScroll, paneContent;
-	private boolean bindingKey;
+	/** The tab shown in the list: an index into {@link #TABS}. */
+	private static int tab = 0;
+
+	/** The key button waiting for a key press (its name), or null; and where the pressed key goes. */
+	private String bindingKey;
+	private IntConsumer bindingSet;
 
 	// What the frame being drawn uses, so the small drawing helpers below need fewer arguments.
 	private GuiGraphicsExtractor g;
@@ -154,7 +226,7 @@ public final class ClientMenuScreen extends Screen {
 
 		listX0 = winX0 + Theme.GAP;
 		listX1 = winX0 + Math.min(LIST_W, w / 3);
-		listY0 = winY0 + Theme.HEADER_HEIGHT + Theme.GAP;
+		listY0 = winY0 + Theme.HEADER_HEIGHT + Theme.GAP + TAB_H + Theme.GAP;
 		listY1 = winY1 - Theme.GAP;
 		paneX0 = listX1 + Theme.PADDING;
 		paneX1 = winX1 - Theme.PADDING;
@@ -220,13 +292,54 @@ public final class ClientMenuScreen extends Screen {
 
 	// ------------------------------------------------------------ module list
 
+	/** The modules under the tab shown now, as indexes into {@link #MODULES}, in list order. */
+	private static List<Integer> shown() {
+		List<Integer> shown = new ArrayList<>();
+		for (int i = 0; i < MODULES.size(); i++) {
+			if (tab == 0 || DUNGEON_MODULES.contains(i)) {
+				shown.add(i);
+			}
+		}
+		return shown;
+	}
+
+	/** The All / Dungeons tabs above the list. */
+	private void drawTabs() {
+		int y0 = winY0 + Theme.HEADER_HEIGHT + Theme.GAP, y1 = y0 + TAB_H;
+		int w = (listX1 - Theme.GAP - listX0 - 4 * (TABS.length - 1)) / TABS.length;
+		for (int i = 0; i < TABS.length; i++) {
+			int x0 = listX0 + i * (w + 4), x1 = x0 + w;
+			boolean hover = UiDraw.inside(mouseX, mouseY, x0, y0, x1, y1);
+			UiDraw.accentCard(g, x0, y0, x1, y1, Theme.ROW_RADIUS, Theme.ACCENT, i == tab, hover);
+			UiFont.Label text = label(TABS[i]);
+			UiDraw.label(g, font, text, x0 + (w - text.width()) / 2, UiFont.centeredY(UiFont.Face.LABEL, y0, TAB_H),
+					i == tab || hover ? Theme.TEXT : Theme.TEXT_LABEL);
+			int index = i;
+			hit(x0, y0, x1, y1, winX0, winY0, winX1, winY1, () -> showTab(index), null);
+			named.put("tab:" + TABS[i], new int[] {x0, y0, x1, y1});
+		}
+	}
+
+	/** Shows a tab, and selects its first module if the selected one is under another tab. */
+	private void showTab(int index) {
+		if (tab != index) {
+			tab = index;
+			listScroll = 0;
+			if (!shown().contains(selected)) {
+				select(shown().get(0));
+			}
+		}
+	}
+
 	private void drawList() {
-		int content = MODULES.size() * ROW_H;
+		drawTabs();
+		List<Integer> shown = shown();
+		int content = shown.size() * ROW_H;
 		listScroll = clamp(listScroll, 0, Math.max(0, content - (listY1 - listY0)));
 		FemboyClientConfig config = FemboyClientConfig.get();
 
 		UiDraw.beginClip(g, listX0, listY0, listX1, listY1);
-		for (int i = 0; i < MODULES.size(); i++) {
+		for (int i : shown) {
 			Module module = MODULES.get(i);
 			int[] row = rowBounds(i);
 			if (row[3] <= listY0 || row[1] >= listY1) {
@@ -294,6 +407,18 @@ public final class ClientMenuScreen extends Screen {
 			case CLICKER -> clickerSettings(config);
 			case PARTICLES -> particleSettings();
 			case HANDMAN -> handManSettings(config);
+			case COPY_CHAT -> copyChatSettings(config);
+			case HIDE_PLAYERS -> hidePlayersSettings(config);
+			case CHEST_ESP -> chestEspSettings(config);
+			case GHOST_BLOCKS -> ghostBlocksSettings(config);
+			case KEY_HIGHLIGHT -> keyHighlightSettings(config);
+			case TEAMMATES -> teammatesSettings(config);
+			case SECRET_HITBOXES -> secretHitboxesSettings(config);
+			case PUZZLES -> puzzleSettings(config);
+			case CAMERA -> cameraSettings(config);
+			case SERVER_DISPLAY -> serverDisplaySettings(config);
+			case CHAT_COMMANDS -> chatCommandsSettings(config);
+			case NO_DEBUFF -> noDebuffSettings(config);
 			default -> {
 			}
 		}
@@ -360,13 +485,7 @@ public final class ClientMenuScreen extends Screen {
 			config.clickerRightClick = choice == 1;
 			config.save();
 		});
-		String key = bindingKey ? "Press a key…" : config.clickerKey < 0 ? "not set"
-				: InputConstants.Type.KEYSYM.getOrCreate(config.clickerKey).getDisplayName().getString();
-		labeledButton("Start/Stop key", key, () -> bindingKey = !bindingKey, () -> {
-			bindingKey = false;
-			config.clickerKey = -1;
-			config.save();
-		});
+		keyButton("Start/Stop key", config.clickerKey, v -> config.clickerKey = v);
 		paragraph("Click to set the key, then press it (Esc cancels). Right click clears it. The spot it clicks is set with "
 				+ "\"Set Location\" in the controls on a container.", Theme.TEXT_DIM);
 	}
@@ -406,6 +525,217 @@ public final class ClientMenuScreen extends Screen {
 			FemboyClientConfig config = FemboyClientConfig.get();
 			set.accept(config, !on);
 			config.save();
+		});
+	}
+
+	private void copyChatSettings(FemboyClientConfig config) {
+		section("Settings");
+		keyButton("Keybind", config.copyChatKey, v -> config.copyChatKey = v);
+		paragraph("Hold to copy message with color codes.", Theme.TEXT_DIM);
+		configSwitch("Send Message", "Sends the message you copied in chat.", config.copyChatSendMessage,
+				(c, on) -> c.copyChatSendMessage = on);
+	}
+
+	private void hidePlayersSettings(FemboyClientConfig config) {
+		section("Settings");
+		configSwitch("Hide all", "Hides all players, regardless of distance.", config.hidePlayersAll, (c, on) -> c.hidePlayersAll = on);
+		slider("Distance", String.format("%.1f blocks", config.hidePlayersDistance / 10.0), config.hidePlayersDistance,
+				HidePlayers.DISTANCE, v -> config.hidePlayersDistance = v);
+		paragraph("The number of blocks away to hide players.", Theme.TEXT_DIM);
+		configSwitch("Click Through", "Allows clicking through players.", config.hidePlayersClickThrough,
+				(c, on) -> c.hidePlayersClickThrough = on);
+		configSwitch("Only Devs", "Only hides players when standing at ss or fourth device.", config.hidePlayersOnlyDevs,
+				(c, on) -> c.hidePlayersOnlyDevs = on);
+	}
+
+	private void chestEspSettings(FemboyClientConfig config) {
+		section("Settings");
+		configSwitch("Only Dungeon", "Only shows chests in dungeons.", config.chestEspOnlyDungeon, (c, on) -> c.chestEspOnlyDungeon = on);
+		configSwitch("Only Crystal Hollows", "Only shows chests in the Crystal Hollows.", config.chestEspOnlyHollows,
+				(c, on) -> c.chestEspOnlyHollows = on);
+		configSwitch("Hide Clicked", "Stops showing a chest once you have right clicked it.", config.chestEspHideClicked,
+				(c, on) -> c.chestEspHideClicked = on);
+		chips("Render Mode", new String[] {"Chams", "Outline"}, config.chestEspMode, choice -> {
+			config.chestEspMode = choice;
+			config.save();
+		});
+		int color = ChestEsp.colorIndex(config.chestEspColor);
+		chips("Color", java.util.Arrays.copyOfRange(ChestEsp.COLOR_NAMES, 0, 4), color, choice -> {
+			config.chestEspColor = ChestEsp.COLORS[choice];
+			config.save();
+		});
+		chips("", java.util.Arrays.copyOfRange(ChestEsp.COLOR_NAMES, 4, 8), color - 4, choice -> {
+			config.chestEspColor = ChestEsp.COLORS[choice + 4];
+			config.save();
+		});
+	}
+
+	private void ghostBlocksSettings(FemboyClientConfig config) {
+		section("Settings");
+		keyButton("Ghost block Keybind", config.ghostBlocksKey, v -> config.ghostBlocksKey = v);
+		paragraph("Makes blocks you're looking at disappear. Click the key button, then press the key (Esc cancels). Right click "
+				+ "clears it.", Theme.TEXT_DIM);
+		slider("Speed", config.ghostBlocksSpeed + " ms", config.ghostBlocksSpeed, GhostBlocks.SPEED, v -> config.ghostBlocksSpeed = v);
+		configSwitch("Ghost Skulls", "If enabled skulls will also be turned into ghost blocks.", config.ghostBlocksSkulls,
+				(c, on) -> c.ghostBlocksSkulls = on);
+		slider("Range", String.format("%.1f", config.ghostBlocksRange / 10.0), config.ghostBlocksRange, GhostBlocks.RANGE,
+				v -> config.ghostBlocksRange = v);
+		paragraph("Maximum range at which ghost blocks will be created.", Theme.TEXT_DIM);
+		configSwitch("Only In Dungeon", "Will only work inside of a dungeon.", config.ghostBlocksOnlyDungeon,
+				(c, on) -> c.ghostBlocksOnlyDungeon = on);
+		configSwitch("F7 Ghost blocks", "Ghost blocks the shortcuts in the Floor 7 boss, by phase.", config.ghostBlocksF7,
+				(c, on) -> c.ghostBlocksF7 = on);
+	}
+
+	private void teammatesSettings(FemboyClientConfig config) {
+		section("Settings");
+		configSwitch("Show Class", "Shows the class of the teammate.", config.teammatesShowClass, (c, on) -> c.teammatesShowClass = on);
+		configSwitch("Outline", "Highlights teammates with an outline.", config.teammatesOutline, (c, on) -> c.teammatesOutline = on);
+		configSwitch("Name", "Highlights teammates with a name tag.", config.teammatesName, (c, on) -> c.teammatesName = on);
+		configSwitch("When Visible", "Highlights teammates only when they are visible.", config.teammatesWhenVisible,
+				(c, on) -> c.teammatesWhenVisible = on);
+		configSwitch("In Boss", "Highlights teammates in boss rooms.", config.teammatesInBoss, (c, on) -> c.teammatesInBoss = on);
+		section("Now");
+		info("Teammates found", Integer.toString(Dungeons.teammates().size()));
+	}
+
+	private void secretHitboxesSettings(FemboyClientConfig config) {
+		section("Settings");
+		configSwitch("Lever", "Levers get a full block hitbox.", config.secretHitboxesLever, (c, on) -> c.secretHitboxesLever = on);
+		configSwitch("Button", "Buttons cover the whole face of their block.", config.secretHitboxesButton,
+				(c, on) -> c.secretHitboxesButton = on);
+		configSwitch("Essence", "Wither essence skulls get a full block hitbox.", config.secretHitboxesEssence,
+				(c, on) -> c.secretHitboxesEssence = on);
+		configSwitch("Chests", "Chests get a full block hitbox.", config.secretHitboxesChests, (c, on) -> c.secretHitboxesChests = on);
+	}
+
+	private void puzzleSettings(FemboyClientConfig config) {
+		section("Now");
+		info("Room", Dungeons.roomName());
+		section("Water");
+		configSwitch("Water Board", "Shows you the solution to the water puzzle.", config.puzzleWater, (c, on) -> c.puzzleWater = on);
+		configSwitch("Show Order", "Shows the order of the levers to click.", config.puzzleWaterOrder, (c, on) -> c.puzzleWaterOrder = on);
+		configSwitch("Show Tracer", "Shows a tracer to the next lever.", config.puzzleWaterTracer, (c, on) -> c.puzzleWaterTracer = on);
+		buttons(new String[] {"Reset water"}, new Runnable[] {WaterSolver::reset});
+		section("Maze");
+		configSwitch("Teleport Maze", "Shows you the solution for the TP maze puzzle.", config.puzzleTpMaze, (c, on) -> c.puzzleTpMaze = on);
+		configSwitch("Solution through walls", "Renders the final solution through walls.", config.puzzleTpMazeThroughWalls,
+				(c, on) -> c.puzzleTpMazeThroughWalls = on);
+		buttons(new String[] {"Reset maze"}, new Runnable[] {TPMaze::reset});
+		section("Tic Tac Toe");
+		configSwitch("Tic Tac Toe", "Shows you the solution for the TTT puzzle.", config.puzzleTtt, (c, on) -> c.puzzleTtt = on);
+		section("Ice Fill");
+		configSwitch("Ice Fill Solver", "Solver for the ice fill puzzle.", config.puzzleIceFill, (c, on) -> c.puzzleIceFill = on);
+		buttons(new String[] {"Reset ice fill"}, new Runnable[] {IceFillSolver::reset});
+		section("Blaze");
+		configSwitch("Blaze Solver", "Boxes the blazes in the order to kill them.", config.puzzleBlaze, (c, on) -> c.puzzleBlaze = on);
+		configSwitch("Blaze Solver Next Line", "Draws a line from each blaze to the next.", config.puzzleBlazeLineNext,
+				(c, on) -> c.puzzleBlazeLineNext = on);
+		slider("Blaze Solver Lines", Integer.toString(config.puzzleBlazeLines), config.puzzleBlazeLines, PuzzleSolvers.BLAZE_LINES,
+				v -> config.puzzleBlazeLines = v);
+		chips("Style", PuzzleSolvers.BLAZE_STYLES, config.puzzleBlazeStyle, choice -> {
+			config.puzzleBlazeStyle = choice;
+			config.save();
+		});
+	}
+
+	private void cameraSettings(FemboyClientConfig config) {
+		section("Settings");
+		configSwitch("No Front Camera", "Skips the third person view from the front.", config.cameraNoFront, (c, on) -> c.cameraNoFront = on);
+		configSwitch("Camera Clip", "The third person camera goes through blocks.", config.cameraClip, (c, on) -> c.cameraClip = on);
+		slider("Distance", String.format("%.1f", config.cameraDistance / 10.0), config.cameraDistance, CameraTweaks.DISTANCE,
+				v -> config.cameraDistance = v);
+		section("Freelook");
+		chips("Type", new String[] {"Hold", "Toggle"}, config.freelookToggle ? 1 : 0, choice -> {
+			config.freelookToggle = choice == 1;
+			config.save();
+		});
+		keyButton("Freelook Key", config.freelookKey, v -> config.freelookKey = v);
+		paragraph("Keybind to toggle/ hold for freelook.", Theme.TEXT_DIM);
+	}
+
+	private void serverDisplaySettings(FemboyClientConfig config) {
+		section("Settings");
+		configSwitch("Ping", "Shows your ping.", config.serverDisplayPing, (c, on) -> c.serverDisplayPing = on);
+		configSwitch("TPS", "Shows the server's TPS.", config.serverDisplayTps, (c, on) -> c.serverDisplayTps = on);
+		configSwitch("FPS", "Shows your FPS.", config.serverDisplayFps, (c, on) -> c.serverDisplayFps = on);
+		chips("Style", new String[] {"Row", "Stacked"}, config.serverDisplayStacked, choice -> {
+			config.serverDisplayStacked = choice;
+			config.save();
+		});
+		section("Display");
+		slider("X", config.serverDisplayX + " px", config.serverDisplayX, 0, Math.max(0, width - 20), 1, v -> config.serverDisplayX = v);
+		slider("Y", config.serverDisplayY + " px", config.serverDisplayY, 0, Math.max(0, height - 10), 1, v -> config.serverDisplayY = v);
+		slider("Scale", config.serverDisplayScale + "%", config.serverDisplayScale, ServerDisplay.SCALE, v -> config.serverDisplayScale = v);
+		info("Now", String.format("Ping %dms · TPS %.1f", (int) ServerStats.ping(), ServerStats.tps()));
+	}
+
+	private void chatCommandsSettings(FemboyClientConfig config) {
+		section("Settings");
+		configSwitch("Party commands", "Toggles chat commands in party chat.", config.chatCommandsParty, (c, on) -> c.chatCommandsParty = on);
+		configSwitch("Guild commands", "Toggles chat commands in guild chat.", config.chatCommandsGuild, (c, on) -> c.chatCommandsGuild = on);
+		configSwitch("Private commands", "Toggles chat commands in private chat.", config.chatCommandsPrivate,
+				(c, on) -> c.chatCommandsPrivate = on);
+		section("Commands");
+		for (var entry : ChatCommands.COMMANDS.entrySet()) {
+			String command = entry.getValue();
+			configSwitch(entry.getKey(), "!" + command, !config.chatCommandsOff.contains(command), (c, on) -> {
+				if (on) {
+					c.chatCommandsOff.remove(command);
+				} else {
+					c.chatCommandsOff.add(command);
+				}
+			});
+		}
+		section("Blacklist");
+		info("Players", Integer.toString(config.chatCommandsBlacklist.size()));
+		paragraph("/blacklist add <name>, /blacklist remove <name>, /blacklist clear, /blacklist list. Their commands are ignored.",
+				Theme.TEXT_DIM);
+	}
+
+	private void noDebuffSettings(FemboyClientConfig config) {
+		section("Settings");
+		configSwitch("No Blindness", "Disables blindness.", config.noDebuffBlindness, (c, on) -> c.noDebuffBlindness = on);
+		configSwitch("No Portal Effect", "Disables the nether portal overlay.", config.noDebuffPortal, (c, on) -> c.noDebuffPortal = on);
+		configSwitch("No Shield Particle", "Removes purple particles and wither impact hearts.", config.noDebuffShieldParticles,
+				(c, on) -> c.noDebuffShieldParticles = on);
+		configSwitch("No Water FOV", "Disable FOV change in water.", config.noDebuffWaterFov, (c, on) -> c.noDebuffWaterFov = on);
+		configSwitch("No Fire Overlay", "Disable Fire overlay on screen.", config.noDebuffFire, (c, on) -> c.noDebuffFire = on);
+		configSwitch("No Push", "Prevents from being pushed out of blocks.", config.noDebuffPush, (c, on) -> c.noDebuffPush = on);
+		configSwitch("See Through Blocks", "Makes blocks transparent.", config.noDebuffSeeThrough, (c, on) -> c.noDebuffSeeThrough = on);
+	}
+
+	private void keyHighlightSettings(FemboyClientConfig config) {
+		section("Settings");
+		slider("Thickness", String.format("%.1f", config.keyHighlightThickness / 10.0), config.keyHighlightThickness,
+				KeyHighlight.THICKNESS, v -> config.keyHighlightThickness = v);
+		paragraph("The thickness of the box.", Theme.TEXT_DIM);
+	}
+
+	/** A switch for one setting, saved when clicked. */
+	private void configSwitch(String name, String hint, boolean on, BiConsumer<FemboyClientConfig, Boolean> set) {
+		switchRow(name, hint, on, () -> {
+			FemboyClientConfig config = FemboyClientConfig.get();
+			set.accept(config, !on);
+			config.save();
+		});
+	}
+
+	/** "Name      [key]": click it, then press a key (Esc cancels); right click clears it. */
+	private void keyButton(String name, int key, IntConsumer set) {
+		String value = name.equals(bindingKey) ? "Press a key…" : key < 0 ? "not set"
+				: InputConstants.Type.KEYSYM.getOrCreate(key).getDisplayName().getString();
+		labeledButton(name, value, () -> {
+			if (name.equals(bindingKey)) {
+				bindingKey = null;
+			} else {
+				bindingKey = name;
+				bindingSet = set;
+			}
+		}, () -> {
+			bindingKey = null;
+			set.accept(-1);
+			FemboyClientConfig.get().save();
 		});
 	}
 
@@ -517,7 +847,7 @@ public final class ClientMenuScreen extends Screen {
 		int w = Math.max(90, UiFont.width(font, value, UiFont.Face.STRONG) + 20);
 		int x1 = paneX1, x0 = x1 - w;
 		boolean hover = UiDraw.inside(mouseX, mouseY, x0, cy, x1, cy + CONTROL_H) && inPane();
-		UiDraw.accentCard(g, x0, cy, x1, cy + CONTROL_H, Theme.ROW_RADIUS, Theme.ACCENT, bindingKey, hover);
+		UiDraw.accentCard(g, x0, cy, x1, cy + CONTROL_H, Theme.ROW_RADIUS, Theme.ACCENT, name.equals(bindingKey), hover);
 		UiDraw.text(g, font, UiFont.sequence(value, UiFont.Face.STRONG), x0 + (w - UiFont.width(font, value, UiFont.Face.STRONG)) / 2,
 				UiFont.centeredY(UiFont.Face.STRONG, cy, CONTROL_H), Theme.TEXT);
 		hit(x0, cy, x1, cy + CONTROL_H, left, right);
@@ -594,7 +924,7 @@ public final class ClientMenuScreen extends Screen {
 		if (event.button() == 0) {
 			for (SliderHit hit : sliderHits) {
 				if (UiDraw.inside(event.x(), event.y(), hit.x0(), hit.y0(), hit.x1(), hit.y1())) {
-					bindingKey = false;
+					bindingKey = null;
 					dragging = hit.slider();
 					dragging.setFrom(event.x());
 					return true;
@@ -607,16 +937,16 @@ public final class ClientMenuScreen extends Screen {
 				Runnable action = event.button() == 0 ? hit.left() : hit.right();
 				if (action != null && UiDraw.inside(event.x(), event.y(), hit.x0(), hit.y0(), hit.x1(), hit.y1())) {
 					// A click anywhere but the key button stops waiting for a key.
-					int[] keyButton = named.get("button:Start/Stop key");
+					int[] keyButton = bindingKey == null ? null : named.get("button:" + bindingKey);
 					if (keyButton == null || !UiDraw.inside(event.x(), event.y(), keyButton[0], keyButton[1], keyButton[2], keyButton[3])) {
-						bindingKey = false;
+						bindingKey = null;
 					}
 					action.run();
 					return true;
 				}
 			}
 		}
-		bindingKey = false;
+		bindingKey = null;
 		return super.mouseClicked(event, doubleClick);
 	}
 
@@ -664,21 +994,22 @@ public final class ClientMenuScreen extends Screen {
 
 	@Override
 	public boolean keyPressed(KeyEvent event) {
-		if (bindingKey) {
-			bindingKey = false;
+		if (bindingKey != null) {
+			bindingKey = null;
 			if (!event.isEscape()) {
-				FemboyClientConfig config = FemboyClientConfig.get();
-				config.clickerKey = event.key();
-				config.save();
+				bindingSet.accept(event.key());
+				FemboyClientConfig.get().save();
 			}
 			return true;
 		}
+		List<Integer> shown = shown();
+		int at = shown.indexOf(selected);
 		if (event.key() == InputConstants.KEY_UP) {
-			select(Math.max(0, selected - 1));
+			select(shown.get(Math.max(0, at - 1)));
 			return true;
 		}
 		if (event.key() == InputConstants.KEY_DOWN) {
-			select(Math.min(MODULES.size() - 1, selected + 1));
+			select(shown.get(Math.min(shown.size() - 1, at + 1)));
 			return true;
 		}
 		return super.keyPressed(event);
@@ -688,7 +1019,10 @@ public final class ClientMenuScreen extends Screen {
 		if (index != selected) {
 			selected = index;
 			paneScroll = 0;
-			bindingKey = false;
+			bindingKey = null;
+		}
+		if (!shown().contains(index)) {
+			tab = 0;                 // a module that is not under this tab: show it under All
 		}
 		// Keep the selected row in view.
 		int[] row = rowBounds(index);
@@ -727,14 +1061,15 @@ public final class ClientMenuScreen extends Screen {
 
 	// ------------------------------------------------------------ for the screenshot tests
 
-	/** The module selected now (index into the list: {@link #MANSION} to {@link #HANDMAN}). */
+	/** The module selected now (index into the list: {@link #MANSION} to {@link #NO_DEBUFF}). */
 	public int selected() {
 		return selected;
 	}
 
 	/** The bounds {x0, y0, x1, y1} of the row at this index in the list (clicking it selects the module). */
 	public int[] rowBounds(int index) {
-		int y0 = listY0 + index * ROW_H - listScroll;
+		int position = shown().indexOf(index);
+		int y0 = position < 0 ? -10_000 : listY0 + position * ROW_H - listScroll;      // under the other tab: off screen
 		return new int[] {listX0, y0 + 1, listX1 - Theme.GAP, y0 + ROW_H - 1};
 	}
 

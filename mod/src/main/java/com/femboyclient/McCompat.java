@@ -12,6 +12,7 @@ import java.lang.reflect.Method;
  * <ul>
  * <li>The open screen is {@code minecraft.screen} in 26.1.2 and {@code minecraft.gui.screen()} in 26.2.</li>
  * <li>The chat listener is {@code minecraft.getChatListener()} in 26.1.2 and {@code minecraft.gui.chatListener()} in 26.2.</li>
+ * <li>The chat window is {@code minecraft.gui.getChat()} in 26.1.2 and {@code minecraft.gui.hud.getChat()} in 26.2.</li>
  * <li>The game's main render target (what the screen is drawn on) is {@code minecraft.getMainRenderTarget()} in 26.1.2 and
  * {@code minecraft.gameRenderer.mainRenderTarget()} in 26.2.</li>
  * </ul>
@@ -30,6 +31,8 @@ public final class McCompat {
 	private static final Method MC_MAIN_TARGET = method(Minecraft.class, "getMainRenderTarget");
 	private static final java.lang.reflect.Field MC_GAME_RENDERER = field(Minecraft.class, "gameRenderer");
 	private static final Method RENDERER_MAIN_TARGET = method(net.minecraft.client.renderer.GameRenderer.class, "mainRenderTarget");
+	private static final Method GUI_GET_CHAT = method(net.minecraft.client.gui.Gui.class, "getChat");
+	private static final java.lang.reflect.Field GUI_HUD = field(net.minecraft.client.gui.Gui.class, "hud");
 
 	private McCompat() {
 	}
@@ -92,6 +95,40 @@ public final class McCompat {
 			}
 		} catch (ReflectiveOperationException | RuntimeException e) {
 			// fall through: no listener known
+		}
+		return null;
+	}
+
+	/** Shows a big title in the middle of the screen: {@code minecraft.gui.setTitle} in 26.1.2, {@code minecraft.gui.hud.setTitle} in 26.2. */
+	static void setTitle(Minecraft mc, net.minecraft.network.chat.Component title) {
+		try {
+			if (mc.gui == null) {
+				return;
+			}
+			Object owner = GUI_HUD != null ? GUI_HUD.get(mc.gui) : mc.gui;
+			if (owner != null) {
+				owner.getClass().getMethod("setTitle", net.minecraft.network.chat.Component.class).invoke(owner, title);
+			}
+		} catch (ReflectiveOperationException | RuntimeException e) {
+			// no title: the party message still goes out
+		}
+	}
+
+	/** The chat window (the messages above the chat box), or null when it cannot be found. */
+	static net.minecraft.client.gui.components.ChatComponent chat(Minecraft mc) {
+		try {
+			if (mc.gui == null) {
+				return null;
+			}
+			if (GUI_GET_CHAT != null) {
+				return (net.minecraft.client.gui.components.ChatComponent) GUI_GET_CHAT.invoke(mc.gui);
+			}
+			if (GUI_HUD != null) {
+				Object hud = GUI_HUD.get(mc.gui);
+				return hud == null ? null : (net.minecraft.client.gui.components.ChatComponent) hud.getClass().getMethod("getChat").invoke(hud);
+			}
+		} catch (ReflectiveOperationException | RuntimeException e) {
+			// fall through: no chat known
 		}
 		return null;
 	}

@@ -152,6 +152,8 @@ public class FemboyClientMod implements ClientModInitializer {
 		if (!Chat.isSendingOwn()) {
 			String line = ScoreboardReader.strip(message.getString());
 			PARTY_TRACKER.onLine(line);
+			KeyHighlight.onChatLine(line);
+			ChatCommands.onChatLine(line);
 			CHAT_COLLECTOR.onLine(line);
 		}
 	}
@@ -192,6 +194,15 @@ public class FemboyClientMod implements ClientModInitializer {
 			PlayerInfoKey.onClientTick(client);
 			FrienemiesSync.tick();
 			Keepsprint.tick(client);
+			Dungeons.tick(client);
+			ServerStats.tick(client);
+			GhostBlocks.tick(client);
+			TeammatesHighlight.tick(client);
+			PuzzleSolvers.tick(client);
+			CameraTweaks.tick(client);
+			ChatCommands.tick(client);
+			ChestEsp.tick(client);
+			KeyHighlight.tick(client);
 			LoopedClicker.tick(client);
 			FINDER.tick();
 			Chat.onTick(client);
@@ -216,6 +227,12 @@ public class FemboyClientMod implements ClientModInitializer {
 		HollowsMapDrag.register();
 		LoopedClickerOverlay.register();
 		PlayerInfoKey.register();
+		CopyChat.register();
+		ChestEsp.register();
+		PuzzleSolvers.register();
+		ChatCommands.register();
+		net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry.addLast(
+				net.minecraft.resources.Identifier.fromNamespaceAndPath(MOD_ID, "server_display"), ServerDisplay::extract);
 
 		// Link this account to the website and start uploading. Does nothing until
 		// an enrollSecret (or apiKey) is in the config.

@@ -3,10 +3,20 @@
 	"package": "com.femboyclient.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
+		"BlockStateBaseMixin",
+		"CameraMixin",
+		"ClientPacketListenerMixin",
+		"EntityMixin",
+		"EntityRenderDispatcherMixin",
 		"ItemInHandRendererMixin",
 		"LightmapRenderStateExtractorMixin",
 		"LivingEntityMixin",
-		"ParticleEngineMixin"
+		"LocalPlayerMixin",
+		"MinecraftMixin",
+		"MobEffectFogEnvironmentMixin",
+		"ParticleEngineMixin",
+		"PlayerMixin",
+		"ScreenEffectRendererMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

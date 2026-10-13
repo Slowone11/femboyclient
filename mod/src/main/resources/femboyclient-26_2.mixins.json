@@ -1,0 +1,11 @@
+{
+	"required": false,
+	"package": "com.femboyclient.mixin26",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"HudMixin"
+	],
+	"injectors": {
+		"defaultRequire": 0
+	}
+}

@@ -15,7 +15,8 @@
 		]
 	},
 	"mixins": [
-		"femboyclient.mixins.json"
+		"femboyclient.mixins.json",
+		"femboyclient-26_2.mixins.json"
 	],
 	"depends": {
 		"fabricloader": ">=0.19.3",
