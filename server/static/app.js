@@ -22,14 +22,6 @@ function ago(ms) {
   return Math.floor(s / 86400) + "d ago";
 }
 
-async function getJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(url + " -> HTTP " + res.status);
-  return res.json();
-}
-
-function remember(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* private mode */ } }
-function recall(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
 // The dot and word in the top corner: whether the website is answering.
 function setLive(state, text) {

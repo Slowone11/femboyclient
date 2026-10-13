@@ -113,18 +113,22 @@ try {
 
   // ------------------------------------------------------------------- helpers
 
+  // The formatters are built once: toLocaleString with options builds a new one on every call, which is slow in a long list.
+  const yearFormat = new Intl.DateTimeFormat("en-US", { timeZone: TZ, year: "numeric" });
+  const shortFormat = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const shortYearFormat = new Intl.DateTimeFormat("en-US",
+    { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", year: "numeric" });
+  const timeFormat = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
+
   // "Sep 21, 3:41 PM" in Toronto time. The year is added for other years.
   function fmtShort(iso) {
     const when = new Date(iso);
-    const opts = { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
-    const year = (d) => d.toLocaleString("en-US", { timeZone: TZ, year: "numeric" });
-    if (year(when) !== year(new Date())) opts.year = "numeric";
-    return when.toLocaleString("en-US", opts);
+    return (yearFormat.format(when) !== yearFormat.format(new Date()) ? shortYearFormat : shortFormat).format(when);
   }
 
   // "3:41 PM" in Toronto time.
   function fmtTime(iso) {
-    return new Date(iso).toLocaleString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
+    return timeFormat.format(new Date(iso));
   }
 
   // "just now", "12m ago", "5h ago", "6d ago", then the date for anything older than a month.
@@ -155,14 +159,8 @@ try {
   const plural = (n, one, many) => num(n) + " " + (n === 1 ? one : (many || one + "s"));
   const dot = (world) => '<i class="tk-dot" style="background:' + esc(worldColor(world)) + '"></i>';
 
-  async function getJson(url) {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(url + " -> HTTP " + res.status);
-    return res.json();
-  }
-
-  function store(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* private mode */ } }
-  function load(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+  function store(key, value) { remember(key, value); }      // core.js; declared as functions so they work above this line
+  function load(key) { return recall(key); }
 
   // --------------------------------------------------------------------- state
 

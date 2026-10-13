@@ -16,3 +16,13 @@ const fullFormat = new Intl.DateTimeFormat("en-US", {
 });
 
 function fmtFull(iso) { return fullFormat.format(new Date(iso)); }
+
+async function getJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(url + " -> HTTP " + res.status);
+  return res.json();
+}
+
+// Saved choices in the browser. Private mode can refuse them: the page then just forgets.
+function remember(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* private mode */ } }
+function recall(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }

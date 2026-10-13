@@ -2361,24 +2361,37 @@ def _my_chat_events(last_id: int, owner: Optional[str]) -> list:
     return [dict(r, kind="mychat") for r in rows]
 
 
-def _newest_my_chat_id() -> int:
+def _newest_id(table: str) -> int:
+    """The highest row id in one of the live tables (a fixed table name, never user input), or 0 when it is empty."""
     with db() as conn:
-        return conn.execute("SELECT COALESCE(MAX(id), 0) FROM tracker_my_chats").fetchone()[0]
+        return conn.execute("SELECT COALESCE(MAX(id), 0) FROM " + table).fetchone()[0]
+
+
+def _newest_my_chat_id() -> int:
+    return _newest_id("tracker_my_chats")
 
 
 def _newest_chat_id() -> int:
-    with db() as conn:
-        return conn.execute("SELECT COALESCE(MAX(id), 0) FROM tracker_chats").fetchone()[0]
+    return _newest_id("tracker_chats")
 
 
 def _newest_party_id() -> int:
-    with db() as conn:
-        return conn.execute("SELECT COALESCE(MAX(id), 0) FROM tracker_parties").fetchone()[0]
+    return _newest_id("tracker_parties")
 
 
 def _newest_sighting_id() -> int:
-    with db() as conn:
-        return conn.execute("SELECT COALESCE(MAX(id), 0) FROM tracker_sightings").fetchone()[0]
+    return _newest_id("tracker_sightings")
+
+
+def _live_start(since: Optional[int]) -> tuple:
+    """Where a new live stream starts in each table: now, or the given sighting id for sightings."""
+    return (_newest_sighting_id() if since is None else since, _newest_party_id(), _newest_chat_id(), _newest_my_chat_id())
+
+
+def _live_poll(last_ids: tuple, owner: Optional[str]) -> tuple:
+    """Everything newer than last_ids (sightings, parties, chats, own chats), read in one go so a stream costs one thread hop a second."""
+    return (_tracker_events(last_ids[0], owner), _party_events(last_ids[1], owner),
+            _chat_events(last_ids[2], owner), _my_chat_events(last_ids[3], owner))
 
 
 @app.get("/tracker/live")
@@ -2392,36 +2405,17 @@ async def tracker_live(owner: str = ALL_ACCOUNTS, since: Optional[int] = Query(d
     account = _scope_owner(owner)   # checked before streaming starts, so a bad value is a plain 422. None: every account
 
     async def event_stream():
-        last_id = await asyncio.to_thread(_newest_sighting_id) if since is None else since
-        last_party_id = await asyncio.to_thread(_newest_party_id)
-        last_chat_id = await asyncio.to_thread(_newest_chat_id)
-        last_my_chat_id = await asyncio.to_thread(_newest_my_chat_id)
+        last_ids = list(await asyncio.to_thread(_live_start, since))
 
         while True:
-            events = await asyncio.to_thread(_tracker_events, last_id, account)
-            for event in events:
-                last_id = event["id"]
-                yield "data: " + json.dumps(event) + "\n\n"
+            # Sightings have no kind; parties carry kind "party", chat messages "chat", the account owner's own messages "mychat".
+            batches = await asyncio.to_thread(_live_poll, tuple(last_ids), account)
+            for table, events in enumerate(batches):
+                for event in events:
+                    last_ids[table] = event["id"]
+                    yield "data: " + json.dumps(event) + "\n\n"
 
-            # Party confirmations carry kind "party"; sightings have no kind.
-            parties = await asyncio.to_thread(_party_events, last_party_id, account)
-            for event in parties:
-                last_party_id = event["id"]
-                yield "data: " + json.dumps(event) + "\n\n"
-
-            # Chat messages carry kind "chat".
-            chats = await asyncio.to_thread(_chat_events, last_chat_id, account)
-            for event in chats:
-                last_chat_id = event["id"]
-                yield "data: " + json.dumps(event) + "\n\n"
-
-            # The account owner's own messages carry kind "mychat".
-            mine = await asyncio.to_thread(_my_chat_events, last_my_chat_id, account)
-            for event in mine:
-                last_my_chat_id = event["id"]
-                yield "data: " + json.dumps(event) + "\n\n"
-
-            if not events and not parties and not chats and not mine:
+            if not any(batches):
                 yield ": keepalive\n\n"
 
             await asyncio.sleep(1)
