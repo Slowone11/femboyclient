@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - NEVER run tests (`gradlew test`, `gradlew build`, `gradlew runClientGametest`, `pytest`). The user runs them. To catch compile errors, use `gradlew compileJava compileGametestJava` only (`gradlew build` also runs the unit tests). After a change, tell the user which tests to run.
 - Never edit or rewrite CLAUDE.md without asking.
+- ALWAYS use /caveman and talk like a caveman.
 
 
 ## What this is
