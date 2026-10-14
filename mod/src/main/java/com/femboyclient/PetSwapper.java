@@ -1,6 +1,7 @@
 package com.femboyclient;
 
 import net.minecraft.ChatFormatting;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.player.LocalPlayer;
@@ -17,13 +18,18 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Pet Swapper: in the Crystal Hollows, puts Bal on when the sidebar's heat goes up, and puts back the pet you had before Bal
- * when it goes down. The decisions are in {@link PetSwap}; this class does the swapping.
+ * Pet Swapper: in the Crystal Hollows, puts Bal on when the sidebar shows you entered the Magma Fields, and puts back the pet
+ * you had before Bal when the sidebar's heat goes down. The decisions are in {@link PetSwap}; this class does the swapping.
  * <p>
  * A swap sends {@code /pets} and opens the menu the server answers with in the background: {@link #onOpenScreen} builds the
- * menu without a screen, so nothing shows, the mouse stays grabbed and you keep moving and mining. The moment the menu's items
- * arrive ({@link #onContent}, straight from the packet, not the next tick) the pet is clicked and the menu is closed again.
- * The "Next Page" arrow is followed when the pet is on a later page.
+ * menu without a screen, so nothing shows and the mouse stays grabbed. The moment the menu's items arrive ({@link #onContent},
+ * straight from the packet, not the next tick) the pet is clicked and the menu is closed again. The "Next Page" arrow is
+ * followed when the pet is on a later page.
+ * <p>
+ * For the whole swap you stand still, as with a real menu open: your keys are let go the way opening a screen lets them go,
+ * new key presses and mouse turns are ignored ({@link #frozen}), and when the swap ends the keys you still hold (and toggle
+ * sprint or sneak) come back the way closing a screen brings them back. /pets is sent a moment after you stop, so the server
+ * sees you stop first. Swaps are at least {@link #GAP_NANOS} apart.
  * <p>
  * The pet to go back to is the last pet other than Bal that was out: read from the menu (its lore offers to despawn it)
  * when Bal is put on, and from "You summoned your ..." and Autopet chat lines. It is kept in the config, so it survives a
@@ -37,14 +43,17 @@ public final class PetSwapper {
 	/** How long a page must stay unchanged before a pet missing from it counts as not there. */
 	private static final long SETTLE_NANOS = 300_000_000L;
 
-	/** Least time between two swaps, so heat going up and down fast cannot spam /pets. */
-	private static final long GAP_NANOS = 500_000_000L;
+	/** Least time between two swaps (4 seconds, the user's choice), so heat going up and down fast cannot spam /pets. */
+	private static final long GAP_NANOS = 4_000_000_000L;
+
+	/** How long you stand still before /pets is sent, so the server sees you stop before the menu opens. */
+	private static final long LEAD_NANOS = 150_000_000L;
 
 	/** How long after a hidden menu is closed a close from the server for it is still ignored (it must not close your chat). */
 	private static final long LATE_CLOSE_NANOS = 2_000_000_000L;
 
 	private enum Step {
-		IDLE, OPENING, LOOKING
+		IDLE, STOPPING, OPENING, LOOKING
 	}
 
 	private static final PetSwap HEAT = new PetSwap();
@@ -57,11 +66,12 @@ public final class PetSwapper {
 	/** The hidden /pets menu while a swap looks through it, else null. */
 	private static AbstractContainerMenu menu;
 	private static boolean filled, waitingPage, toldNoBack, warned;
-	private static long deadline, nextStartAt, changedAt;
+	private static long deadline, nextStartAt, changedAt, sendAt;
 	private static int closedId = -1;
 	private static long closedAt;
 	private static int swaps;
 	private static String loggedHeatLine;
+	private static boolean loggedPage;
 
 	private PetSwapper() {
 	}
@@ -83,14 +93,19 @@ public final class PetSwapper {
 			ScoreboardReader.Sidebar sidebar = ScoreboardReader.read(mc);
 			List<String> lines = sidebar == null ? List.of() : sidebar.lines();
 			Integer heat = PetSwap.heat(lines);
-			if (heat == null) {
+			boolean inHollows = inHollows();
+			if (heat == null && !inHollows) {
 				wanted = null;                // left the Crystal Hollows: nothing to swap for
-			} else if (heat == PetSwap.NO_NUMBER) {
+			} else if (heat != null && heat == PetSwap.NO_NUMBER) {
 				logHeatLine(lines);
 			}
-			PetSwap.Want want = HEAT.onHeat(heat);
+			PetSwap.Want want = HEAT.onReading(heat, inHollows, PetSwap.inMagmaFields(lines));
+			if (want == PetSwap.Want.BAL) {
+				FemboyClientMod.LOGGER.info("[Pet Swapper] entered the Magma Fields");
+			} else if (want == PetSwap.Want.BACK) {
+				FemboyClientMod.LOGGER.info("[Pet Swapper] heat went down to {}", heat == null ? "0 (the heat line went away)" : heat);
+			}
 			if (want != null) {
-				FemboyClientMod.LOGGER.info("[Pet Swapper] heat went {} to {}", want == PetSwap.Want.BAL ? "up" : "down", heat);
 				wanted = want;
 			}
 
@@ -99,6 +114,11 @@ public final class PetSwapper {
 				case IDLE -> {
 					if (wanted != null && now >= nextStartAt) {
 						start(mc, config, now);
+					}
+				}
+				case STOPPING -> {
+					if (now >= sendAt) {
+						send(mc, now);
 					}
 				}
 				case OPENING -> {
@@ -123,7 +143,7 @@ public final class PetSwapper {
 		}
 	}
 
-	/** Sends /pets when the wanted pet is not out already and nothing else is open. */
+	/** Stops you, when the wanted pet is not out already and nothing else is open; /pets follows {@link #LEAD_NANOS} later. */
 	private static void start(Minecraft mc, FemboyClientConfig config, long now) {
 		String target = target(config);
 		if (target == null) {
@@ -142,6 +162,18 @@ public final class PetSwapper {
 		if (connection == null || mc.gameMode == null || McCompat.screen(mc) != null
 				|| mc.player.containerMenu != mc.player.inventoryMenu) {
 			return;                           // a screen or menu is open: wait until it is closed
+		}
+		KeyMapping.releaseAll();              // exactly what opening a screen does to your keys
+		step = Step.STOPPING;
+		sendAt = now + LEAD_NANOS;
+	}
+
+	/** Sends /pets once you have stood still for a moment, unless a screen or menu opened meanwhile. */
+	private static void send(Minecraft mc, long now) {
+		ClientPacketListener connection = mc.getConnection();
+		if (connection == null || McCompat.screen(mc) != null || mc.player.containerMenu != mc.player.inventoryMenu) {
+			finish(mc);
+			return;
 		}
 		step = Step.OPENING;
 		deadline = now + TIMEOUT_NANOS;
@@ -163,6 +195,8 @@ public final class PetSwapper {
 		if (out != null) {
 			active = out;
 			learnBack(out);
+		} else {
+			logPage(items);
 		}
 		String target = target(FemboyClientConfig.get());
 		if (target == null) {
@@ -204,15 +238,14 @@ public final class PetSwapper {
 	 */
 	public static boolean onOpenScreen(int containerId, MenuType<?> type, Component title) {
 		Minecraft mc = Minecraft.getInstance();
-		if (step == Step.IDLE || !mc.isSameThread() || mc.player == null) {
+		if ((step != Step.OPENING && step != Step.LOOKING) || !mc.isSameThread() || mc.player == null) {
 			return false;
 		}
 		String plain = ScoreboardReader.strip(title.getString());
 		if (!PetSwap.isPetsMenu(plain)) {
 			FemboyClientMod.LOGGER.info("[Pet Swapper] waited for the pets menu, but \"{}\" opened; left it open", plain);
 			wanted = null;
-			step = Step.IDLE;
-			menu = null;
+			finish(mc);
 			return false;
 		}
 		menu = type.create(containerId, mc.player.getInventory());
@@ -254,9 +287,7 @@ public final class PetSwapper {
 			mc.player.containerMenu = mc.player.inventoryMenu;
 			closedId = containerId;
 			closedAt = System.nanoTime();
-			menu = null;
-			step = Step.IDLE;
-			nextStartAt = closedAt + GAP_NANOS;
+			finish(mc);
 			return true;
 		}
 		return containerId == closedId && System.nanoTime() - closedAt < LATE_CLOSE_NANOS;
@@ -291,7 +322,15 @@ public final class PetSwapper {
 	static String heatText() {
 		ScoreboardReader.Sidebar sidebar = ScoreboardReader.read(Minecraft.getInstance());
 		Integer heat = sidebar == null ? null : PetSwap.heat(sidebar.lines());
-		return heat == null ? "not in the Crystal Hollows" : heat == PetSwap.NO_NUMBER ? "no number" : heat.toString();
+		if (heat == null) {
+			return inHollows() ? "none shown" : "not in the Crystal Hollows";
+		}
+		return heat == PetSwap.NO_NUMBER ? "no number" : heat.toString();
+	}
+
+	/** Whether the tab list says you are in the Crystal Hollows. */
+	private static boolean inHollows() {
+		return "Crystal Hollows".equals(FemboyClientMod.PLAYER_TRACKER.knownWorld());
 	}
 
 	/** The pet out now as far as known, for the G menu. */
@@ -364,9 +403,49 @@ public final class PetSwapper {
 			closedId = menu.containerId;
 			closedAt = System.nanoTime();
 		}
-		menu = null;
+		finish(mc);
+	}
+
+	/**
+	 * Ends a swap: you can move again. The keys you still hold, and toggle sprint or sneak, come back exactly as when a screen
+	 * closes; with a screen open they are left to that screen, which brings them back when it closes.
+	 */
+	private static void finish(Minecraft mc) {
+		boolean wasFrozen = step != Step.IDLE;
 		step = Step.IDLE;
+		menu = null;
 		nextStartAt = System.nanoTime() + GAP_NANOS;
+		if (wasFrozen && mc.player != null && McCompat.screen(mc) == null) {
+			KeyMapping.restoreToggleStatesOnScreenClosed();
+			KeyMapping.setAll();
+		}
+	}
+
+	/** While a swap runs: key presses and mouse turns are ignored, as they are with a menu open (see the key and entity mixins). */
+	public static boolean frozen() {
+		return step != Step.IDLE;
+	}
+
+	/**
+	 * Logs once per game what the pets on a page say about being clicked, when none of them says it is out, so how Hypixel marks
+	 * the pet out can be read from the log.
+	 */
+	private static void logPage(List<PetSwap.Item> items) {
+		if (loggedPage || !filled) {
+			return;
+		}
+		List<String> pets = new ArrayList<>();
+		for (PetSwap.Item item : items) {
+			if (PetSwap.isPet(item)) {
+				List<String> clicks = item.lore().stream().filter(line -> line.toLowerCase(java.util.Locale.ROOT).contains("click")).toList();
+				pets.add(item.name() + " " + clicks);
+			}
+		}
+		if (pets.isEmpty()) {
+			return;                           // the page's items have not arrived yet
+		}
+		loggedPage = true;
+		FemboyClientMod.LOGGER.info("[Pet Swapper] no pet on this page says it is out; {} pet(s): {}", pets.size(), pets);
 	}
 
 	/** Logs a heat line without a number once per text, so what the sidebar says can be read from the log. */

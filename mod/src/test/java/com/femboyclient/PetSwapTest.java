@@ -25,24 +25,73 @@ class PetSwapTest {
 	}
 
 	@Test
-	void heatGoingUpAsksForBalAndGoingDownForTheOtherPet() {
-		PetSwap swap = new PetSwap();
-		assertNull(swap.onHeat(5));                          // first reading: nothing to compare with
-		assertEquals(PetSwap.Want.BAL, swap.onHeat(6));
-		assertNull(swap.onHeat(6));
-		assertEquals(PetSwap.Want.BACK, swap.onHeat(5));
-		assertEquals(PetSwap.Want.BAL, swap.onHeat(7));
+	void theMagmaFieldsAreKnownByTheSidebarAreaLine() {
+		assertTrue(PetSwap.inMagmaFields(List.of("10/13/26 m109DN", "⏣ Magma Fields", "Heat: ♨ 3")));
+		assertTrue(PetSwap.inMagmaFields(List.of(" ⏣ Magma Fields")));
+		assertFalse(PetSwap.inMagmaFields(List.of("⏣ Crystal Nucleus", "Heat: ♨ 0")));
+		assertFalse(PetSwap.inMagmaFields(List.of("[123] Someone: Magma Fields")));
 	}
 
 	@Test
-	void aHeatLineWithoutANumberKeepsTheLastOneAndNoHeatLineForgetsIt() {
+	void enteringTheMagmaFieldsAsksForBalOnce() {
 		PetSwap swap = new PetSwap();
-		swap.onHeat(10);
-		assertNull(swap.onHeat(PetSwap.NO_NUMBER));
-		assertEquals(PetSwap.Want.BACK, swap.onHeat(9));
-		assertNull(swap.onHeat(null));                       // left the Crystal Hollows
-		assertNull(swap.onHeat(3));
-		assertEquals(PetSwap.Want.BAL, swap.onHeat(4));
+		assertNull(swap.onReading(0, true, false));
+		assertEquals(PetSwap.Want.BAL, swap.onReading(0, true, true));
+		assertNull(swap.onReading(0, true, true));                  // still there: nothing new
+		assertNull(swap.onReading(1, true, true));                  // heat going up asks for nothing
+		assertNull(swap.onReading(1, true, false));                 // leaving asks for nothing
+		assertEquals(PetSwap.Want.BAL, swap.onReading(1, true, true));   // entering again: Bal again
+	}
+
+	@Test
+	void heatGoingDownAsksForTheOtherPetAndGoingUpForNothing() {
+		PetSwap swap = new PetSwap();
+		assertNull(swap.onReading(5, true, false));                 // first reading: nothing to compare with
+		assertNull(swap.onReading(6, true, false));
+		assertNull(swap.onReading(6, true, false));
+		assertEquals(PetSwap.Want.BACK, swap.onReading(5, true, false));
+		assertNull(swap.onReading(7, true, false));
+	}
+
+	@Test
+	void enteringTheMagmaFieldsWinsOverHeatGoingDownInTheSameReading() {
+		PetSwap swap = new PetSwap();
+		swap.onReading(5, true, false);
+		assertEquals(PetSwap.Want.BAL, swap.onReading(4, true, true));
+	}
+
+	@Test
+	void aHeatLineWithoutANumberKeepsTheLastOneAndLeavingTheHollowsForgetsIt() {
+		PetSwap swap = new PetSwap();
+		swap.onReading(10, true, false);
+		assertNull(swap.onReading(PetSwap.NO_NUMBER, true, false));
+		assertEquals(PetSwap.Want.BACK, swap.onReading(9, true, false));
+		assertNull(swap.onReading(null, false, false));             // left the Crystal Hollows
+		assertNull(swap.onReading(3, true, false));
+		assertEquals(PetSwap.Want.BACK, swap.onReading(2, true, false));
+	}
+
+	@Test
+	void theHeatLineGoingAwayInTheHollowsCountsAsHeatGoingDownOnce() {
+		PetSwap swap = new PetSwap();
+		swap.onReading(1, true, true);
+		for (int tick = 1; tick < PetSwap.GONE_TICKS; tick++) {
+			assertNull(swap.onReading(null, true, true));           // a short gap is not enough
+		}
+		assertEquals(PetSwap.Want.BACK, swap.onReading(null, true, true));
+		for (int tick = 0; tick < 100; tick++) {
+			assertNull(swap.onReading(null, true, true));           // only once
+		}
+	}
+
+	@Test
+	void aBrieflyMissingHeatLineChangesNothing() {
+		PetSwap swap = new PetSwap();
+		swap.onReading(4, true, false);
+		for (int tick = 0; tick < 5; tick++) {
+			assertNull(swap.onReading(null, true, false));
+		}
+		assertNull(swap.onReading(4, true, false));
 	}
 
 	@Test

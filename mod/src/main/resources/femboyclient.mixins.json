@@ -11,6 +11,7 @@
 		"EntityMixin",
 		"EntityRenderDispatcherMixin",
 		"ItemInHandRendererMixin",
+		"KeyMappingMixin",
 		"LightmapRenderStateExtractorMixin",
 		"LivingEntityMixin",
 		"LocalPlayerMixin",

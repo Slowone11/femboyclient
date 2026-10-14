@@ -112,8 +112,8 @@ public final class ClientMenuScreen extends Screen {
 			new Module("Wiki Bar", "A bar under every inventory and chest. Type math to calculate it (50m/4, 3s, ans*2), or an item "
 					+ "to read its SkyBlock wiki page and plan its recipe. Ctrl+F or a click types in it; Ctrl+drag moves it.",
 					c -> c.wikiBar, saved((c, on) -> c.wikiBar = on)),
-			new Module("Pet Swapper", "Crystal Hollows: when your heat goes up it puts Bal on, when it goes down it puts back the pet "
-					+ "you had before. Swaps through /pets in the background: no menu shows and you keep moving.",
+			new Module("Pet Swapper", "Crystal Hollows: when you enter the Magma Fields it puts Bal on, when your heat goes down it "
+					+ "puts back the pet you had before. Swaps through /pets in the background: no menu shows.",
 					c -> c.petSwapper, saved((c, on) -> c.petSwapper = on)),
 			new Module("Starred Mobs", "Shows the starred (✯) mobs, the ones a room needs killed, through walls in dungeons.",
 					c -> c.starredMobs, saved((c, on) -> c.starredMobs = on)));
@@ -687,7 +687,8 @@ public final class ClientMenuScreen extends Screen {
 		info("Swaps back to", config.petSwapBack.isBlank() ? "not known yet" : config.petSwapBack);
 		info("Swaps this game", Integer.toString(PetSwapper.swaps()));
 		section("How it works");
-		paragraph("Heat up → Bal. Heat down → the pet you had out before Bal. Nothing happens when that pet is already out.",
+		paragraph("Enter the Magma Fields → Bal. Heat down → the pet you had out before Bal. Nothing happens when that pet is "
+				+ "already out.",
 				Theme.TEXT);
 		paragraph("The pet to swap back to is the last pet other than Bal you had out. To change it, summon the other pet "
 				+ "yourself once.", Theme.TEXT_DIM);

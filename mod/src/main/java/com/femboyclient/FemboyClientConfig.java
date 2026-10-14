@@ -134,7 +134,7 @@ public final class FemboyClientConfig {
 	/** Where the Wiki Bar sits after it was dragged (its center x and its top y), in GUI pixels; -1: under the inventory. */
 	public int wikiBarX = -1, wikiBarY = -1;
 
-	/** Pet Swapper (see PetSwapper): Bal when Crystal Hollows heat goes up, the pet you had before when it goes down. */
+	/** Pet Swapper (see PetSwapper): Bal when you enter the Magma Fields, the pet you had before when heat goes down. */
 	public boolean petSwapper = false;
 	/** The pet Pet Swapper swaps back to: the last pet other than Bal you had out. Learned in game; empty until then. */
 	public String petSwapBack = "";

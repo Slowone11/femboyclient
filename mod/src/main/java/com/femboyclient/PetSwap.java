@@ -6,16 +6,16 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The Minecraft-free half of {@link PetSwapper}: reads the Crystal Hollows heat off the sidebar, decides which pet the heat
- * asks for, reads pet names out of chat lines, and finds pets in the {@code /pets} menu. Kept free of game classes so plain
- * JUnit tests cover it.
+ * The Minecraft-free half of {@link PetSwapper}: reads the Crystal Hollows heat and area off the sidebar, decides which pet
+ * they ask for, reads pet names out of chat lines, and finds pets in the {@code /pets} menu. Kept free of game classes so
+ * plain JUnit tests cover it.
  */
 final class PetSwap {
 
-	/** The pet put on when heat goes up. */
+	/** The pet put on when you enter the Magma Fields. */
 	static final String BAL = "Bal";
 
-	/** Which pet the heat asks for: Bal when it went up, the pet you had before Bal when it went down. */
+	/** Which pet is asked for: Bal when you enter the Magma Fields, the pet you had before Bal when heat goes down. */
 	enum Want {
 		BAL, BACK
 	}
@@ -23,12 +23,21 @@ final class PetSwap {
 	/** A sidebar heat reading that has no number (for example "Heat: IMMUNE"). */
 	static final int NO_NUMBER = -1;
 
+	/**
+	 * Ticks (20 a second) the heat line must stay gone, while still in the Crystal Hollows, before it counts as heat 0. The
+	 * line can vanish when heat runs out; the wait keeps a line briefly missing while the sidebar redraws from counting.
+	 */
+	static final int GONE_TICKS = 30;
+
 	/** "Heat: ♨ 12" (color codes already gone): the number is the first run of digits after the colon. */
 	private static final Pattern HEAT = Pattern.compile("^Heat:\\D*(\\d+)");
 
 	private static final Pattern SUMMONED = Pattern.compile("^You summoned your (.+?)!$");
 	private static final Pattern DESPAWNED = Pattern.compile("^You despawned your (.+?)!$");
 	private static final Pattern AUTOPET = Pattern.compile("^Autopet equipped your (.+?)!(?: VIEW RULE)?$");
+
+	/** The sidebar's area line in the Magma Fields, "⏣ Magma Fields" (color codes already gone): any symbols, then the name. */
+	private static final Pattern MAGMA_FIELDS = Pattern.compile("^[^\\p{L}]*Magma Fields$");
 
 	/** "Pets" or "Pets (2/3)": the title of the /pets menu, color codes already gone. */
 	private static final Pattern PETS_MENU = Pattern.compile("^Pets(?: \\(\\d+/\\d+\\))?$");
@@ -39,6 +48,10 @@ final class PetSwap {
 
 	/** Heat at the last reading that had a number, or {@link #NO_NUMBER} when not known. */
 	private int lastHeat = NO_NUMBER;
+	/** Readings in a row without a heat line while in the Crystal Hollows. */
+	private int goneTicks;
+	/** Whether the last reading was in the Magma Fields. */
+	private boolean wasInMagmaFields;
 
 	/**
 	 * The heat on the sidebar lines (color codes already gone): its number, {@link #NO_NUMBER} when the heat line has no
@@ -61,30 +74,63 @@ final class PetSwap {
 		return null;
 	}
 
+	/** Whether the sidebar lines (color codes already gone) say you are in the Magma Fields. */
+	static boolean inMagmaFields(List<String> lines) {
+		for (String line : lines) {
+			if (MAGMA_FIELDS.matcher(line).matches()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/**
-	 * Takes a new heat reading (see {@link #heat}) and says which pet it asks for: {@link Want#BAL} when heat went up since the
-	 * last reading, {@link Want#BACK} when it went down, null when it did not change or there is nothing to compare with. No heat
-	 * line forgets the last number; a heat line without a number keeps it.
+	 * Takes a new reading, one per tick, and says which pet it asks for: {@link Want#BAL} when you just entered the Magma Fields,
+	 * {@link Want#BACK} when heat went down since the last reading, else null. Going up in heat asks for nothing.
+	 *
+	 * @param heat           see {@link #heat}
+	 * @param inHollows      whether you are in the Crystal Hollows at all
+	 * @param inMagmaFields  see {@link #inMagmaFields}
 	 */
-	Want onHeat(Integer heat) {
+	Want onReading(Integer heat, boolean inHollows, boolean inMagmaFields) {
+		boolean entered = inMagmaFields && !wasInMagmaFields;
+		wasInMagmaFields = inMagmaFields;
+		boolean cooled = heatWentDown(heat, inHollows);
+		return entered ? Want.BAL : cooled ? Want.BACK : null;
+	}
+
+	/**
+	 * Whether this heat reading is lower than the last one with a number. A heat line without a number keeps the last number. No
+	 * heat line in the Crystal Hollows for {@link #GONE_TICKS} counts as heat 0 (once); no heat line anywhere else forgets the
+	 * last number.
+	 */
+	private boolean heatWentDown(Integer heat, boolean inHollows) {
 		if (heat == null) {
-			lastHeat = NO_NUMBER;
-			return null;
+			if (!inHollows) {
+				lastHeat = NO_NUMBER;
+				goneTicks = 0;
+				return false;
+			}
+			if (++goneTicks != GONE_TICKS) {
+				return false;
+			}
+			heat = 0;                      // the line went away: no heat left
+		} else {
+			goneTicks = 0;
 		}
 		if (heat == NO_NUMBER) {
-			return null;
+			return false;
 		}
 		int before = lastHeat;
 		lastHeat = heat;
-		if (before == NO_NUMBER || heat == before) {
-			return null;
-		}
-		return heat > before ? Want.BAL : Want.BACK;
+		return before != NO_NUMBER && heat < before;
 	}
 
-	/** Forgets the last heat reading. */
+	/** Forgets the last reading. */
 	void reset() {
 		lastHeat = NO_NUMBER;
+		goneTicks = 0;
+		wasInMagmaFields = false;
 	}
 
 	/** Whether this pet name is Bal. */

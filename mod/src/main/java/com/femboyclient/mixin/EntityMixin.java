@@ -1,6 +1,7 @@
 package com.femboyclient.mixin;
 
 import com.femboyclient.CameraTweaks;
+import com.femboyclient.PetSwapper;
 import com.femboyclient.StarredMobs;
 import com.femboyclient.TeammatesHighlight;
 import net.minecraft.client.Minecraft;
@@ -12,8 +13,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * {@link TeammatesHighlight}'s and {@link StarredMobs}' outline colour, and {@link CameraTweaks}' Freelook: while it is on, the
- * mouse turns the camera instead of your player. All optional (require = 0).
+ * {@link TeammatesHighlight}'s and {@link StarredMobs}' outline colour, {@link CameraTweaks}' Freelook: while it is on, the
+ * mouse turns the camera instead of your player, and {@link PetSwapper}: while it swaps, the mouse does not turn you, as with a
+ * menu open. All optional (require = 0).
  */
 @Mixin(Entity.class)
 public abstract class EntityMixin {
@@ -33,6 +35,8 @@ public abstract class EntityMixin {
 	private void femboyclient$freelook(double dx, double dy, CallbackInfo ci) {
 		if (CameraTweaks.freelook() && (Object) this == Minecraft.getInstance().player) {
 			CameraTweaks.turn(dx, dy);
+			ci.cancel();
+		} else if (PetSwapper.frozen() && (Object) this == Minecraft.getInstance().player) {
 			ci.cancel();
 		}
 	}
